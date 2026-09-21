@@ -174,9 +174,16 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
           ),
           const SetSwitchItem(
             title: '启用 AI 评论过滤',
-            subtitle: '评论先正常显示，AI 判定为令人不适后折叠',
+            subtitle: '评论加载后立即送检，仅显示通过检测的评论',
             leading: Icon(Icons.auto_awesome),
             setKey: SettingBoxKey.enableAiReplyFilter,
+            defaultVal: false,
+          ),
+          const SetSwitchItem(
+            title: '显示被过滤的评论',
+            subtitle: '开启后被过滤的评论以折叠提示显示，可点击查看原文',
+            leading: Icon(Icons.visibility_off_outlined),
+            setKey: SettingBoxKey.aiReplyFilterRevealFiltered,
             defaultVal: false,
           ),
           ListTile(
@@ -215,12 +222,12 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 '说明：\n'
-                '• 评论会先正常显示，AI 判定为令人不适后自动折叠为过滤提示\n'
-                '• 点击被过滤的评论可临时显示，长按可选择不再过滤\n'
+                '• 进入视频页会先检测首屏约 20 条评论，其余在评论区下滑加载时继续检测\n'
+                '• 只显示通过检测的评论；检测期间暂不显示，结果返回后逐条出现，失败自动重试\n'
+                '• 被过滤的评论默认完全不显示，可开启「显示被过滤的评论」查看\n'
                 '• 长按任意评论可选择「AI 重新检测」，忽略缓存强制复查\n'
                 '• 仅评论文本会发送到所配置的 AI 接口，不会上传账号信息\n'
-                '• 判定结果会缓存在本地，同一条评论只检测一次\n'
-                '• 修改过滤标准后，缓存会自动失效并重新判定',
+                '• 判定结果缓存在本地，同一条评论只检测一次，修改过滤标准后自动重判',
                 style: theme.textTheme.bodySmall,
               ),
             ),

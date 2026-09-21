@@ -206,7 +206,8 @@ abstract final class SettingBoxKey {
       aiPromptTemplates = 'aiPromptTemplates';
 
   static const String enableAiReplyFilter = 'enableAiReplyFilter',
-      aiReplyFilterCriteria = 'aiReplyFilterCriteria';
+      aiReplyFilterCriteria = 'aiReplyFilterCriteria',
+      aiReplyFilterRevealFiltered = 'aiReplyFilterRevealFiltered';
 
   static const String minimizeOnExit = 'minimizeOnExit',
       windowSize = 'windowSize',

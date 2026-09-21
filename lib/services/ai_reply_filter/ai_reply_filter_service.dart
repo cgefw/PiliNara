@@ -22,7 +22,8 @@ class AiReplyFilterService {
 
   static final AiReplyFilterService instance = AiReplyFilterService._();
 
-  static const int _batchSize = 8;
+  static const int _batchSize = 20;
+  static const int _maxConcurrent = 3;
   static const int _maxCacheEntries = 1500;
   static const int _maxRetryEntries = 200;
   static const int _maxTextLength = 500;
@@ -69,7 +70,8 @@ class AiReplyFilterService {
 
   Duration _retryDelay = _retryCooldown;
 
-  bool _processing = false;
+  int _batchesInFlight = 0;
+
   bool _persistScheduled = false;
 
   static bool get enabled => Pref.enableAiReplyFilter && apiReady;
@@ -199,6 +201,8 @@ class AiReplyFilterService {
     return verdicts[hash];
   }
 
+  bool isFailed(String hash) => _failedAt.containsKey(hash);
+
   bool isRevealed(String hash) =>
       revealed.containsKey(hash) || allowed.containsKey(hash);
 
@@ -207,6 +211,13 @@ class AiReplyFilterService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     trackHash(contentHash(trimmed), trimmed);
+  }
+
+  void trackAll(Iterable<String> texts) {
+    if (!enabled) return;
+    for (final text in texts) {
+      track(text);
+    }
   }
 
   void trackHash(String hash, String text) {
@@ -219,7 +230,7 @@ class AiReplyFilterService {
     }
     _pending[hash] = _truncate(normalize(text));
     if (!(_timer?.isActive ?? false)) {
-      _timer = Timer(_debounce, _flush);
+      _timer = Timer(_debounce, _pump);
     }
   }
 
@@ -277,6 +288,7 @@ class AiReplyFilterService {
         {'role': 'system', 'content': system},
         {'role': 'user', 'content': user},
       ],
+      receiveTimeout: const Duration(seconds: 30),
     );
     return parseVerdicts(content, texts.length);
   }
@@ -288,23 +300,32 @@ class AiReplyFilterService {
     return results[0];
   }
 
-  Future<void> _flush() async {
+  void _pump() {
     _timer = null;
-    if (_processing) return;
     if (!enabled) {
       _pending.clear();
       return;
     }
-    if (_pending.isEmpty) return;
+    while (_batchesInFlight < _maxConcurrent && _pending.isNotEmpty) {
+      _startBatch();
+    }
+  }
 
+  void _startBatch() {
     final batch = _pending.entries.take(_batchSize).toList();
+    if (batch.isEmpty) return;
     for (final entry in batch) {
       _pending.remove(entry.key);
       _inFlight.add(entry.key);
     }
+    _batchesInFlight++;
+    _runBatch(batch, DateTime.now());
+  }
 
-    _processing = true;
-    final now = DateTime.now();
+  Future<void> _runBatch(
+    List<MapEntry<String, String>> batch,
+    DateTime now,
+  ) async {
     var success = false;
     var hasMissing = false;
     try {
@@ -346,13 +367,11 @@ class AiReplyFilterService {
       for (final entry in batch) {
         _inFlight.remove(entry.key);
       }
-      _processing = false;
+      _batchesInFlight--;
       if (hasMissing || !success) {
         _scheduleRetry();
       }
-      if (_pending.isNotEmpty) {
-        _timer = Timer(Duration.zero, _flush);
-      }
+      _pump();
     }
   }
 
@@ -382,7 +401,7 @@ class AiReplyFilterService {
       }
       _retryTexts.clear();
       if (!(_timer?.isActive ?? false)) {
-        _timer = Timer(Duration.zero, _flush);
+        _timer = Timer(Duration.zero, _pump);
       }
     });
     final next = _retryDelay * 2;

@@ -11,6 +11,7 @@ import 'package:PiliPlus/common/widgets/scaffold/mini_scaffold.dart';
 import 'package:PiliPlus/grpc/bilibili/app/listener/v1.pbenum.dart'
     show PlaylistSource;
 import 'package:PiliPlus/grpc/dm.dart';
+import 'package:PiliPlus/grpc/reply.dart';
 import 'package:PiliPlus/http/browser_ua.dart';
 import 'package:PiliPlus/http/fav.dart';
 import 'package:PiliPlus/http/init.dart';
@@ -59,6 +60,7 @@ import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/models/data_source.dart';
 import 'package:PiliPlus/plugin/pl_player/models/heart_beat_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/services/download/download_collection_service.dart';
 import 'package:PiliPlus/services/download/download_service.dart';
 import 'package:PiliPlus/services/pip_overlay_service.dart';
@@ -498,6 +500,19 @@ class VideoDetailController extends GetxController
       watchLaterTitle = args['favTitle'];
       _listOrder = args['desc'] == true ? ListOrder.desc : ListOrder.asc;
       getMediaList();
+    }
+
+    if (!isFileSource &&
+        !Pref.defaultShowComment &&
+        Pref.showVideoReply &&
+        AiReplyFilterService.enabled) {
+      final prefetchOid = videoType == VideoType.pugv ? epId : aid;
+      if (prefetchOid != null && prefetchOid != 0) {
+        ReplyGrpc.prefetchAiReplyFilter(
+          oid: prefetchOid,
+          type: videoType.replyType,
+        );
+      }
     }
 
     tabCtr = TabController(

@@ -230,6 +230,7 @@ class AiChatService {
   static Future<String> completeChat({
     required List<Map<String, String>> messages,
     String? model,
+    Duration? receiveTimeout,
   }) async {
     final baseUrl = _baseUrl();
     if (baseUrl.isEmpty) throw Exception('请先配置 API 地址');
@@ -246,7 +247,7 @@ class AiChatService {
           'messages': messages,
           'stream': false,
         }),
-        options: _options(),
+        options: _options(receiveTimeout: receiveTimeout),
       );
     } on DioException catch (e) {
       throw await _requestError(url, e);

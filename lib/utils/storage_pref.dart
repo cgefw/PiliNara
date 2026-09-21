@@ -1644,6 +1644,14 @@ abstract final class Pref {
   static set aiReplyFilterCriteria(String value) =>
       _setting.put(SettingBoxKey.aiReplyFilterCriteria, value);
 
+  static bool get aiReplyFilterRevealFiltered => _setting.get(
+    SettingBoxKey.aiReplyFilterRevealFiltered,
+    defaultValue: false,
+  );
+
+  static set aiReplyFilterRevealFiltered(bool value) =>
+      _setting.put(SettingBoxKey.aiReplyFilterRevealFiltered, value);
+
   static int get angleDegrees =>
       _setting.get(SettingBoxKey.angleDegrees, defaultValue: 30);
 

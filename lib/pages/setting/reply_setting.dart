@@ -68,7 +68,7 @@ class _ReplySettingState extends State<ReplySetting> {
               '* 白名单用户与动态流/推荐流共享，白名单优先于带货屏蔽和常规过滤。\n'
               '* 关键词过滤支持正则表达式，多个关键词使用|分隔。\n'
               '* 等级过滤：屏蔽低于所设等级的用户发布的评论，0 为关闭。\n'
-              '* AI 评论过滤：评论先正常显示，大模型判定为令人不适后折叠为提示，点击可显示；需先在「AI 过滤设置」中配置接口。\n'
+              '* AI 评论过滤：进视频先检测首屏约 20 条，其余在评论区下滑加载时继续；只显示通过检测的评论，需先在「AI 过滤设置」中配置接口。\n'
               '* 设置立即生效，刷新评论区即可看到过滤结果。',
               style: theme.textTheme.labelSmall!.copyWith(
                 color: theme.colorScheme.outline.withValues(alpha: 0.7),

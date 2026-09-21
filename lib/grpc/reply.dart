@@ -4,6 +4,7 @@ import 'package:PiliPlus/grpc/bilibili/pagination.pb.dart';
 import 'package:PiliPlus/grpc/grpc_req.dart';
 import 'package:PiliPlus/grpc/url.dart';
 import 'package:PiliPlus/http/loading_state.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/user_whitelist.dart';
 import 'package:fixnum/fixnum.dart';
@@ -62,12 +63,49 @@ abstract final class ReplyGrpc {
         (enableFilter && replyRegExp.hasMatch(reply.content.message));
   }
 
+  static void trackAiReplyFilter(
+    Iterable<ReplyInfo> replies, {
+    int? limit,
+  }) {
+    if (!AiReplyFilterService.enabled) return;
+    final service = AiReplyFilterService.instance;
+    var count = 0;
+    for (final reply in replies) {
+      if (limit != null && count >= limit) return;
+      service.track(reply.content.message);
+      count++;
+      for (final sub in reply.replies) {
+        if (limit != null && count >= limit) return;
+        service.track(sub.content.message);
+        count++;
+      }
+    }
+  }
+
+  static Future<void> prefetchAiReplyFilter({
+    required int oid,
+    int type = 1,
+  }) async {
+    if (!AiReplyFilterService.enabled) return;
+    await mainList(
+      type: type,
+      oid: oid,
+      mode: Pref.replySortType == .time
+          ? Mode.MAIN_LIST_TIME
+          : Mode.MAIN_LIST_HOT,
+      offset: null,
+      cursorNext: null,
+      trackLimit: 20,
+    );
+  }
+
   static Future<LoadingState<MainListReply>> mainList({
     int type = 1,
     required int oid,
     required Mode mode,
     required String? offset,
     required Int64? cursorNext,
+    int? trackLimit,
   }) async {
     final res = await GrpcReq.request(
       GrpcUrl.mainList,
@@ -109,6 +147,10 @@ abstract final class ReplyGrpc {
           return hasMatch;
         });
       }
+      if (response.hasUpTop()) {
+        trackAiReplyFilter([response.upTop], limit: trackLimit);
+      }
+      trackAiReplyFilter(response.replies, limit: trackLimit);
     }
     return res;
   }
@@ -139,6 +181,7 @@ abstract final class ReplyGrpc {
       response.root.replies.removeWhere((item) {
         return needRemoveGrpc(item, upMid: upMid);
       });
+      trackAiReplyFilter([response.root, ...response.root.replies]);
     }
     return res;
   }
@@ -166,6 +209,7 @@ abstract final class ReplyGrpc {
       response.replies.removeWhere((item) {
         return needRemoveGrpc(item, upMid: upMid);
       });
+      trackAiReplyFilter(response.replies);
     }
     return res;
   }

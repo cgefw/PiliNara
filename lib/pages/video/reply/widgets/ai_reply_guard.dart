@@ -1,6 +1,7 @@
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
 import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -23,12 +24,18 @@ class AiReplyGuard extends StatelessWidget {
     if (text.trim().isEmpty) return child;
     final service = AiReplyFilterService.instance;
     final hash = AiReplyFilterService.contentHash(text);
-    service.trackHash(hash, text);
     return Obx(() {
       final verdict = service.verdictOfHash(hash);
-      if (verdict == null || !verdict.unsafe || service.isRevealed(hash)) {
-        return child;
+      if (verdict == null) {
+        if (service.isFailed(hash)) return child;
+        service.trackHash(hash, text);
+        return const SizedBox.shrink();
       }
+      if (!verdict.unsafe) return child;
+      if (!Pref.aiReplyFilterRevealFiltered) {
+        return const SizedBox.shrink();
+      }
+      if (service.isRevealed(hash)) return child;
       void showDetail() => _showDetail(context, hash, verdict);
       void reveal() => service.reveal(hash);
       return isSubReply

@@ -226,6 +226,60 @@ class AiChatService {
     }
   }
 
+  /// Non-streaming chat completion from {base}/chat/completions
+  static Future<String> completeChat({
+    required List<Map<String, String>> messages,
+    String? model,
+  }) async {
+    final baseUrl = _baseUrl();
+    if (baseUrl.isEmpty) throw Exception('请先配置 API 地址');
+    final useModel = model ?? Pref.aiModel;
+    if (useModel.isEmpty) throw Exception('请先选择模型');
+
+    final url = '$baseUrl/chat/completions';
+    final Response res;
+    try {
+      res = await Dio().post(
+        url,
+        data: jsonEncode({
+          'model': useModel,
+          'messages': messages,
+          'stream': false,
+        }),
+        options: _options(),
+      );
+    } on DioException catch (e) {
+      throw await _requestError(url, e);
+    }
+
+    dynamic data = res.data;
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (_) {}
+    }
+    if (data is Map) {
+      final choices = data['choices'];
+      if (choices is List && choices.isNotEmpty) {
+        final choice = choices[0];
+        if (choice is Map) {
+          final message = choice['message'];
+          if (message is Map && message['content'] != null) {
+            return message['content'].toString();
+          }
+          if (choice['text'] != null) {
+            return choice['text'].toString();
+          }
+        }
+      }
+    }
+    throw _logged(AiApiException(
+      url: url,
+      statusCode: res.statusCode,
+      detail: '响应缺少内容：${_snippet(data?.toString() ?? '')}',
+    ));
+  }
+
   // --- Template CRUD ---
 
   static final List<AiPromptTemplate> defaultTemplates = [

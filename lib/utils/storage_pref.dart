@@ -1630,6 +1630,20 @@ abstract final class Pref {
   static set aiPromptTemplates(String value) =>
       _setting.put(SettingBoxKey.aiPromptTemplates, value);
 
+  static bool get enableAiReplyFilter => _setting.get(
+    SettingBoxKey.enableAiReplyFilter,
+    defaultValue: false,
+  );
+
+  static set enableAiReplyFilter(bool value) =>
+      _setting.put(SettingBoxKey.enableAiReplyFilter, value);
+
+  static String get aiReplyFilterCriteria =>
+      _setting.get(SettingBoxKey.aiReplyFilterCriteria, defaultValue: '');
+
+  static set aiReplyFilterCriteria(String value) =>
+      _setting.put(SettingBoxKey.aiReplyFilterCriteria, value);
+
   static int get angleDegrees =>
       _setting.get(SettingBoxKey.angleDegrees, defaultValue: 30);
 

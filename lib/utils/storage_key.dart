@@ -205,6 +205,9 @@ abstract final class SettingBoxKey {
       aiModelListCacheTime = 'aiModelListCacheTime',
       aiPromptTemplates = 'aiPromptTemplates';
 
+  static const String enableAiReplyFilter = 'enableAiReplyFilter',
+      aiReplyFilterCriteria = 'aiReplyFilterCriteria';
+
   static const String minimizeOnExit = 'minimizeOnExit',
       windowSize = 'windowSize',
       windowPosition = 'windowPosition',
@@ -342,7 +345,8 @@ abstract final class LocalCacheKey {
       remarkMids = 'remarkMids',
       cdnNodeList = 'cdnNodeList',
       cdnNodeListTime = 'cdnNodeListTime',
-      cdnNodeRegion = 'cdnNodeRegion';
+      cdnNodeRegion = 'cdnNodeRegion',
+      aiReplyFilterCache = 'aiReplyFilterCache';
 }
 
 abstract final class VideoBoxKey {

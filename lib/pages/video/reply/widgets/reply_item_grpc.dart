@@ -26,6 +26,7 @@ import 'package:PiliPlus/pages/member/widget/medal_widget.dart';
 import 'package:PiliPlus/pages/save_panel/view.dart';
 import 'package:PiliPlus/pages/audio/controller.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
+import 'package:PiliPlus/pages/video/reply/widgets/ai_reply_guard.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/zan_grpc.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/app_scheme.dart';
@@ -136,13 +137,16 @@ class ReplyItemGrpc extends StatelessWidget {
         ],
       );
     }
-    return Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        onTap: () => replyReply?.call(replyItem, null),
-        onLongPress: showMore,
-        onSecondaryTap: PlatformUtils.isMobile ? null : showMore,
-        child: child,
+    return AiReplyGuard(
+      reply: replyItem,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: () => replyReply?.call(replyItem, null),
+          onLongPress: showMore,
+          onSecondaryTap: PlatformUtils.isMobile ? null : showMore,
+          child: child,
+        ),
       ),
     );
   }
@@ -611,66 +615,70 @@ class ReplyItemGrpc extends StatelessWidget {
                     );
                   },
                 );
-                return InkWell(
-                  borderRadius: borderRadius,
-                  onTap: () =>
-                      replyReply?.call(replyItem, childReply.id.toInt()),
-                  onLongPress: showMore,
-                  onSecondaryTap: PlatformUtils.isMobile ? null : showMore,
-                  child: Padding(
-                    padding: padding,
-                    child: TextEllipsis.rich(
-                      style: TextStyle(
-                        height: 1.6,
-                        fontSize: 14,
-                        color: colorScheme.onSurface.withValues(alpha: 0.85),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 2,
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: remarkedName(
-                              childReply.member.mid.toInt(),
-                              childReply.member.name,
-                            ),
-                            style: TextStyle(color: colorScheme.primary),
-                            recognizer: NoDeadlineTapGestureRecognizer()
-                              ..onTap = () {
-                                feedBack();
-                                Get.toNamed(
-                                  '/member?mid=${childReply.member.mid}',
-                                );
-                              },
-                          ),
-                          if (childReply.mid == upMid) ...[
-                            const TextSpan(text: ' '),
-                            const WidgetSpan(
-                              alignment: .middle,
-                              child: PBadge(
-                                text: 'UP',
-                                size: .small,
-                                isStack: false,
-                                fontSize: 9,
-                                textScaleFactor: 1,
+                return AiReplyGuard(
+                  reply: childReply,
+                  isSubReply: true,
+                  child: InkWell(
+                    borderRadius: borderRadius,
+                    onTap: () =>
+                        replyReply?.call(replyItem, childReply.id.toInt()),
+                    onLongPress: showMore,
+                    onSecondaryTap: PlatformUtils.isMobile ? null : showMore,
+                    child: Padding(
+                      padding: padding,
+                      child: TextEllipsis.rich(
+                        style: TextStyle(
+                          height: 1.6,
+                          fontSize: 14,
+                          color: colorScheme.onSurface.withValues(alpha: 0.85),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: remarkedName(
+                                childReply.member.mid.toInt(),
+                                childReply.member.name,
                               ),
+                              style: TextStyle(color: colorScheme.primary),
+                              recognizer: NoDeadlineTapGestureRecognizer()
+                                ..onTap = () {
+                                  feedBack();
+                                  Get.toNamed(
+                                    '/member?mid=${childReply.member.mid}',
+                                  );
+                                },
                             ),
-                            const TextSpan(text: ' '),
+                            if (childReply.mid == upMid) ...[
+                              const TextSpan(text: ' '),
+                              const WidgetSpan(
+                                alignment: .middle,
+                                child: PBadge(
+                                  text: 'UP',
+                                  size: .small,
+                                  isStack: false,
+                                  fontSize: 9,
+                                  textScaleFactor: 1,
+                                ),
+                              ),
+                              const TextSpan(text: ' '),
+                            ],
+                            TextSpan(
+                              text: childReply.root == childReply.parent
+                                  ? ': '
+                                  : childReply.mid == upMid
+                                  ? ''
+                                  : ' ',
+                            ),
+                            _buildMessage(
+                              context,
+                              colorScheme,
+                              childReply.content,
+                              childReply.replyControl,
+                            ),
                           ],
-                          TextSpan(
-                            text: childReply.root == childReply.parent
-                                ? ': '
-                                : childReply.mid == upMid
-                                ? ''
-                                : ' ',
-                          ),
-                          _buildMessage(
-                            context,
-                            colorScheme,
-                            childReply.content,
-                            childReply.replyControl,
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),

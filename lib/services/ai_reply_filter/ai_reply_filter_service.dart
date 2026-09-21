@@ -1,0 +1,357 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:PiliPlus/services/ai_chat/ai_chat_service.dart';
+import 'package:PiliPlus/services/logger.dart';
+import 'package:PiliPlus/utils/storage.dart';
+import 'package:PiliPlus/utils/storage_key.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
+import 'package:crypto/crypto.dart' show md5;
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:get/get.dart';
+
+class AiReplyVerdict {
+  const AiReplyVerdict({required this.unsafe, this.reason = ''});
+
+  final bool unsafe;
+  final String reason;
+}
+
+class AiReplyFilterService {
+  AiReplyFilterService._();
+
+  static final AiReplyFilterService instance = AiReplyFilterService._();
+
+  static const int _batchSize = 8;
+  static const int _maxCacheEntries = 1500;
+  static const int _maxTextLength = 500;
+  static const int _maxReasonLength = 30;
+  static const Duration _debounce = Duration(milliseconds: 350);
+  static const Duration _retryCooldown = Duration(seconds: 60);
+
+  static const String defaultSystemPrompt =
+      '你是视频评论区的内容审查助手，负责判断一条评论是否会让普通浏览者感到不适。\n'
+      '以下内容属于「令人不适」，需要过滤：\n'
+      '1. 辱骂、人身攻击、诅咒、威胁、挑衅；\n'
+      '2. 地域、性别、种族、职业、外貌等歧视与仇恨言论；\n'
+      '3. 阴阳怪气、引战、恶意嘲讽、抬杠；\n'
+      '4. 色情低俗、性暗示、荤段子；\n'
+      '5. 血腥、暴力、恐怖、恶心、猎奇等引起生理不适的内容；\n'
+      '6. 广告推广、诈骗、违法与垃圾信息；\n'
+      '7. 其他让普通人明显反感、不适的内容。\n'
+      '注意：正常的批评、吐槽、负面评价、不同观点、玩梗不属于令人不适，不要误判。';
+
+  final RxMap<String, AiReplyVerdict> verdicts =
+      <String, AiReplyVerdict>{}.obs;
+
+  final RxMap<String, bool> revealed = <String, bool>{}.obs;
+
+  final RxMap<String, bool> allowed = <String, bool>{}.obs;
+
+  final Map<String, String> _pending = {};
+
+  final Set<String> _inFlight = {};
+
+  final Map<String, DateTime> _failedAt = {};
+
+  final Map<String, List<Object?>> _cache = {};
+
+  Timer? _timer;
+
+  bool _processing = false;
+  bool _persistScheduled = false;
+
+  static bool get enabled => Pref.enableAiReplyFilter && apiReady;
+
+  static bool get apiReady =>
+      Pref.aiApiUrl.trim().isNotEmpty && Pref.aiModel.trim().isNotEmpty;
+
+  int get cacheCount => verdicts.length;
+
+  static String normalize(String text) =>
+      text.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  static String contentHash(String text) =>
+      md5.convert(utf8.encode(normalize(text).toLowerCase())).toString();
+
+  static String criteriaFingerprint([String criteria = '']) =>
+      md5.convert(utf8.encode('$defaultSystemPrompt\n$criteria')).toString();
+
+  static String _truncate(String text) =>
+      text.length > _maxTextLength ? text.substring(0, _maxTextLength) : text;
+
+  static (String, String) buildPrompt(
+    List<String> texts, {
+    String criteria = '',
+  }) {
+    final extra = criteria.trim();
+    final system = extra.isEmpty
+        ? defaultSystemPrompt
+        : '$defaultSystemPrompt\n'
+              '额外过滤标准（用户自定义，优先遵守）：$extra';
+    final buffer = StringBuffer()
+      ..writeln(
+        '请逐条审查下面 ${texts.length} 条评论，只输出一个 JSON 数组，'
+        '不要输出任何其他内容。',
+      )
+      ..writeln(
+        '数组元素格式：{"i":序号,"u":是否令人不适,"r":"原因"}；'
+        '序号从 1 开始，u 为布尔值，r 为不超过 10 字的原因（不令人不适时留空字符串）。',
+      )
+      ..writeln('评论列表：');
+    for (var i = 0; i < texts.length; i++) {
+      buffer.writeln('${i + 1}. ${texts[i]}');
+    }
+    return (system, buffer.toString());
+  }
+
+  @visibleForTesting
+  static Map<int, AiReplyVerdict> parseVerdicts(String raw, int count) {
+    var text = raw.trim();
+    if (text.startsWith('```')) {
+      text = text
+          .replaceAll(RegExp(r'^```[a-zA-Z]*\s*'), '')
+          .replaceAll(RegExp(r'```\s*$'), '')
+          .trim();
+    }
+    final start = text.indexOf('[');
+    final end = text.lastIndexOf(']');
+    if (start == -1 || end <= start) return const {};
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(text.substring(start, end + 1));
+    } catch (_) {
+      return const {};
+    }
+    if (decoded is! List) return const {};
+    final result = <int, AiReplyVerdict>{};
+    for (final item in decoded) {
+      if (item is! Map) continue;
+      final index = switch (item['i'] ?? item['index'] ?? item['id']) {
+        final int value => value,
+        final num value => value.toInt(),
+        final String value => int.tryParse(value) ?? -1,
+        _ => -1,
+      };
+      if (index < 1 || index > count) continue;
+      final rawUnsafe = item['u'] ?? item['unsafe'];
+      final unsafe =
+          rawUnsafe == true ||
+          rawUnsafe == 1 ||
+          rawUnsafe == 'true' ||
+          rawUnsafe == '1';
+      var reason = (item['r'] ?? item['reason'] ?? '').toString().trim();
+      if (reason.length > _maxReasonLength) {
+        reason = reason.substring(0, _maxReasonLength);
+      }
+      result[index] = AiReplyVerdict(unsafe: unsafe, reason: reason);
+    }
+    return result;
+  }
+
+  void init() {
+    try {
+      final raw = GStorage.localCache.get(LocalCacheKey.aiReplyFilterCache);
+      if (raw is! String || raw.isEmpty) return;
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final allowList = decoded['allow'];
+      if (allowList is List) {
+        for (final hash in allowList) {
+          if (hash is String) allowed[hash] = true;
+        }
+      }
+      final items = decoded['items'];
+      if (items is Map) {
+        final fingerprint = criteriaFingerprint(Pref.aiReplyFilterCriteria);
+        items.forEach((key, value) {
+          if (key is! String || value is! List || value.length < 4) return;
+          if (value[3]?.toString() != fingerprint) return;
+          final unsafe = value[0] == 1 || value[0] == true;
+          final reason = value[1]?.toString() ?? '';
+          verdicts[key] = AiReplyVerdict(unsafe: unsafe, reason: reason);
+          _cache[key] = List<Object?>.from(value);
+        });
+      }
+    } catch (e) {
+      logger.e('AI 评论过滤缓存加载失败', error: e);
+    }
+  }
+
+  AiReplyVerdict? verdictOfHash(String hash) {
+    if (allowed.containsKey(hash)) return null;
+    return verdicts[hash];
+  }
+
+  bool isRevealed(String hash) =>
+      revealed.containsKey(hash) || allowed.containsKey(hash);
+
+  void track(String text) {
+    if (!enabled) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    trackHash(contentHash(trimmed), trimmed);
+  }
+
+  void trackHash(String hash, String text) {
+    if (verdicts.containsKey(hash) || allowed.containsKey(hash)) return;
+    if (_pending.containsKey(hash) || _inFlight.contains(hash)) return;
+    final failedAt = _failedAt[hash];
+    if (failedAt != null &&
+        DateTime.now().difference(failedAt) < _retryCooldown) {
+      return;
+    }
+    _pending[hash] = _truncate(text);
+    if (!(_timer?.isActive ?? false)) {
+      _timer = Timer(_debounce, _flush);
+    }
+  }
+
+  void reveal(String hash) {
+    revealed[hash] = true;
+  }
+
+  void allowForever(String hash) {
+    allowed[hash] = true;
+    revealed.remove(hash);
+    verdicts.remove(hash);
+    _cache.remove(hash);
+    _schedulePersist();
+  }
+
+  void onCriteriaChanged() {
+    verdicts.clear();
+    _cache.clear();
+    _pending.clear();
+    _failedAt.clear();
+    _schedulePersist();
+  }
+
+  Future<void> clearCache() async {
+    verdicts.clear();
+    _cache.clear();
+    _failedAt.clear();
+    try {
+      await GStorage.localCache.delete(LocalCacheKey.aiReplyFilterCache);
+      _persist();
+    } catch (e) {
+      logger.e('AI 评论过滤缓存清除失败', error: e);
+    }
+  }
+
+  @visibleForTesting
+  Future<Map<int, AiReplyVerdict>> classifyTexts(
+    List<String> texts, {
+    String? criteria,
+  }) async {
+    final (system, user) = buildPrompt(
+      texts,
+      criteria: criteria ?? Pref.aiReplyFilterCriteria,
+    );
+    final content = await AiChatService.completeChat(
+      messages: [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user},
+      ],
+    );
+    return parseVerdicts(content, texts.length);
+  }
+
+  Future<AiReplyVerdict?> checkNow(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return null;
+    final results = await classifyTexts([_truncate(trimmed)]);
+    return results[1];
+  }
+
+  Future<void> _flush() async {
+    _timer = null;
+    if (_processing) return;
+    if (!enabled) {
+      _pending.clear();
+      return;
+    }
+    if (_pending.isEmpty) return;
+
+    final batch = _pending.entries.take(_batchSize).toList();
+    for (final entry in batch) {
+      _pending.remove(entry.key);
+      _inFlight.add(entry.key);
+    }
+
+    _processing = true;
+    final now = DateTime.now();
+    try {
+      final results = await classifyTexts(
+        batch.map((e) => e.value).toList(),
+      );
+      final fingerprint = criteriaFingerprint(Pref.aiReplyFilterCriteria);
+      final timestamp = now.millisecondsSinceEpoch;
+      for (var i = 0; i < batch.length; i++) {
+        final hash = batch[i].key;
+        final verdict = results[i + 1];
+        if (verdict == null) {
+          _failedAt[hash] = now;
+          continue;
+        }
+        verdicts[hash] = verdict;
+        _cache[hash] = [
+          verdict.unsafe ? 1 : 0,
+          verdict.reason,
+          timestamp,
+          fingerprint,
+        ];
+      }
+      _trimCache();
+      _schedulePersist();
+    } catch (e, s) {
+      logger.e('AI 评论过滤请求失败', error: e, stackTrace: s);
+      for (final entry in batch) {
+        _failedAt[entry.key] = now;
+      }
+    } finally {
+      for (final entry in batch) {
+        _inFlight.remove(entry.key);
+      }
+      _processing = false;
+      if (_pending.isNotEmpty) {
+        _timer = Timer(Duration.zero, _flush);
+      }
+    }
+  }
+
+  void _trimCache() {
+    if (_cache.length <= _maxCacheEntries) return;
+    final entries = _cache.entries.toList()
+      ..sort(
+        (a, b) => (a.value[2] as int? ?? 0).compareTo(b.value[2] as int? ?? 0),
+      );
+    final removeCount = _cache.length - _maxCacheEntries;
+    for (var i = 0; i < removeCount; i++) {
+      _cache.remove(entries[i].key);
+    }
+  }
+
+  void _schedulePersist() {
+    if (_persistScheduled) return;
+    _persistScheduled = true;
+    Timer(const Duration(seconds: 2), () {
+      _persistScheduled = false;
+      _persist();
+    });
+  }
+
+  void _persist() {
+    try {
+      GStorage.localCache.put(
+        LocalCacheKey.aiReplyFilterCache,
+        jsonEncode({
+          'allow': allowed.keys.toList(),
+          'items': _cache,
+        }),
+      );
+    } catch (e) {
+      logger.e('AI 评论过滤缓存保存失败', error: e);
+    }
+  }
+}

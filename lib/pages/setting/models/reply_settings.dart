@@ -1,9 +1,12 @@
 import 'package:PiliPlus/common/widgets/custom_icon.dart';
 import 'package:PiliPlus/grpc/reply.dart';
+import 'package:PiliPlus/pages/setting/ai_reply_filter_setting.dart';
 import 'package:PiliPlus/pages/setting/models/model.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/user_whitelist.dart';
+import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
 List<SettingsModel> get replySettings => [
@@ -32,6 +35,21 @@ List<SettingsModel> get replySettings => [
     getUidsMap: () => Pref.whitelistMids,
     setUidsMap: UserWhitelist.save,
     onUpdate: () {},
+  ),
+  SwitchModel(
+    title: 'AI 评论过滤',
+    subtitle: '调用 AI 大模型过滤让人不适的评论（先显示，判定后折叠）',
+    leading: const Icon(Icons.auto_awesome),
+    setKey: SettingBoxKey.enableAiReplyFilter,
+    defaultVal: false,
+  ),
+  NormalModel(
+    title: 'AI 过滤设置',
+    leading: const Icon(Icons.shield_outlined),
+    getSubtitle: () => AiReplyFilterService.apiReady
+        ? '当前模型：${Pref.aiModel}'
+        : '未配置 AI 接口，点击前往设置',
+    onTap: (context, _) => Get.to(() => const AiReplyFilterSetting()),
   ),
   SwitchModel(
     title: '屏蔽带货评论',

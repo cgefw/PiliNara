@@ -28,6 +28,7 @@ import 'package:PiliPlus/pages/audio/controller.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/ai_reply_guard.dart';
 import 'package:PiliPlus/pages/video/reply/widgets/zan_grpc.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/app_scheme.dart';
 import 'package:PiliPlus/utils/bili_utils.dart';
@@ -1267,6 +1268,36 @@ class ReplyItemGrpc extends StatelessWidget {
             leading: const Icon(Icons.save_alt, size: 19),
             title: Text('保存评论', style: style),
           ),
+          if (AiReplyFilterService.enabled)
+            ListTile(
+              onTap: () async {
+                Get.back();
+                SmartDialog.showLoading(msg: 'AI 检测中...');
+                try {
+                  final verdict = await AiReplyFilterService.instance.recheck(
+                    message,
+                  );
+                  SmartDialog.dismiss();
+                  if (verdict == null) {
+                    SmartDialog.showToast('未返回判定结果');
+                  } else if (verdict.unsafe) {
+                    SmartDialog.showToast(
+                      verdict.reason.isEmpty
+                          ? 'AI 判定为令人不适，已过滤'
+                          : 'AI 判定为令人不适（${verdict.reason}），已过滤',
+                    );
+                  } else {
+                    SmartDialog.showToast('AI 判定不会令人不适');
+                  }
+                } catch (e) {
+                  SmartDialog.dismiss();
+                  SmartDialog.showToast(e.toString());
+                }
+              },
+              minLeadingWidth: 0,
+              leading: const Icon(Icons.auto_awesome, size: 19),
+              title: Text('AI 重新检测', style: style),
+            ),
           if (kDebugMode || item.mid == ownerMid)
             ListTile(
               onTap: () {

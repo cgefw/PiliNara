@@ -190,7 +190,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             title: const Text('自定义过滤标准'),
             subtitle: Text(
               criteria.isEmpty
-                  ? '默认：过滤辱骂、引战、低俗、歧视等令人不适的内容'
+                  ? '默认：过滤辱骂、引战、说教、低俗、歧视等令人不适的内容'
                   : criteria,
             ),
             onTap: _editCriteria,
@@ -217,6 +217,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
                 '说明：\n'
                 '• 评论会先正常显示，AI 判定为令人不适后自动折叠为过滤提示\n'
                 '• 点击被过滤的评论可临时显示，长按可选择不再过滤\n'
+                '• 长按任意评论可选择「AI 重新检测」，忽略缓存强制复查\n'
                 '• 仅评论文本会发送到所配置的 AI 接口，不会上传账号信息\n'
                 '• 判定结果会缓存在本地，同一条评论只检测一次\n'
                 '• 修改过滤标准后，缓存会自动失效并重新判定',

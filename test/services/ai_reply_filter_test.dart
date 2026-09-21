@@ -19,34 +19,64 @@ void main() {
   });
 
   group('parseVerdicts', () {
-    test('parses plain json array', () {
+    test('parses zero-based json array', () {
       final result = AiReplyFilterService.parseVerdicts(
-        '[{"i":1,"u":true,"r":"辱骂"},{"i":2,"u":false,"r":""}]',
+        '[{"i":0,"u":true,"r":"辱骂"},{"i":1,"u":false,"r":""}]',
         2,
       );
-      expect(result.length, 2);
-      expect(result[1]!.unsafe, isTrue);
-      expect(result[1]!.reason, '辱骂');
-      expect(result[2]!.unsafe, isFalse);
+      expect(result.keys.toSet(), {0, 1});
+      expect(result[0]!.unsafe, isTrue);
+      expect(result[0]!.reason, '辱骂');
+      expect(result[1]!.unsafe, isFalse);
+    });
+
+    test('falls back to one-based indices', () {
+      final result = AiReplyFilterService.parseVerdicts(
+        '[{"i":1,"u":true,"r":"引战"},{"i":2,"u":false,"r":""}]',
+        2,
+      );
+      expect(result.keys.toSet(), {0, 1});
+      expect(result[0]!.unsafe, isTrue);
+      expect(result[1]!.unsafe, isFalse);
+    });
+
+    test('single comment works for both index bases', () {
+      final zero = AiReplyFilterService.parseVerdicts(
+        '[{"i":0,"u":true,"r":"a"}]',
+        1,
+      );
+      final one = AiReplyFilterService.parseVerdicts(
+        '[{"i":1,"u":true,"r":"a"}]',
+        1,
+      );
+      expect(zero[0]!.unsafe, isTrue);
+      expect(one[0]!.unsafe, isTrue);
     });
 
     test('parses fenced json with surrounding text', () {
       const raw = '分析结果如下：\n'
           '```json\n'
-          '[{"i": 1, "u": 1, "r": "引战"}]\n'
+          '[{"i": 0, "u": 1, "r": "引战"}]\n'
           '```\n';
       final result = AiReplyFilterService.parseVerdicts(raw, 1);
-      expect(result[1]!.unsafe, isTrue);
-      expect(result[1]!.reason, '引战');
+      expect(result[0]!.unsafe, isTrue);
+      expect(result[0]!.reason, '引战');
     });
 
     test('ignores out-of-range and invalid entries', () {
       final result = AiReplyFilterService.parseVerdicts(
-        '[{"i":0,"u":true},{"i":5,"u":true},{"x":1},{"i":"2","u":"true"}]',
+        '[{"i":-1,"u":true},{"i":9,"u":true},{"x":1},{"i":"abc"}]',
         2,
       );
-      expect(result.keys, [2]);
-      expect(result[2]!.unsafe, isTrue);
+      expect(result, isEmpty);
+    });
+
+    test('keeps only returned entries', () {
+      final result = AiReplyFilterService.parseVerdicts(
+        '[{"i":0,"u":true,"r":"a"}]',
+        3,
+      );
+      expect(result.keys.toSet(), {0});
     });
 
     test('returns empty on invalid json', () {
@@ -57,22 +87,24 @@ void main() {
     test('truncates long reason', () {
       final long = List.filled(50, '原').join();
       final result = AiReplyFilterService.parseVerdicts(
-        '[{"i":1,"u":true,"r":"$long"}]',
+        '[{"i":0,"u":true,"r":"$long"}]',
         1,
       );
-      expect(result[1]!.reason.length, 30);
+      expect(result[0]!.reason.length, 30);
     });
   });
 
   group('buildPrompt', () {
-    test('includes criteria and numbered texts', () {
+    test('includes criteria and numbered json payload', () {
       final (system, user) = AiReplyFilterService.buildPrompt(
         ['第一条', '第二条'],
         criteria: '过滤剧透',
       );
       expect(system, contains('过滤剧透'));
-      expect(user, contains('1. 第一条'));
-      expect(user, contains('2. 第二条'));
+      expect(user, contains('"i":0'));
+      expect(user, contains('"i":1'));
+      expect(user, contains('第一条'));
+      expect(user, contains('第二条'));
     });
 
     test('uses default system prompt without criteria', () {

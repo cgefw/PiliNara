@@ -24,6 +24,7 @@ class AiReplyFilterService {
 
   static const int _batchSize = 8;
   static const int _maxCacheEntries = 1500;
+  static const int _maxRetryEntries = 200;
   static const int _maxTextLength = 500;
   static const int _maxReasonLength = 30;
   static const Duration _debounce = Duration(milliseconds: 350);
@@ -33,13 +34,17 @@ class AiReplyFilterService {
       '你是视频评论区的内容审查助手，负责判断一条评论是否会让普通浏览者感到不适。\n'
       '以下内容属于「令人不适」，需要过滤：\n'
       '1. 辱骂、人身攻击、诅咒、威胁、挑衅；\n'
-      '2. 地域、性别、种族、职业、外貌等歧视与仇恨言论；\n'
-      '3. 阴阳怪气、引战、恶意嘲讽、抬杠；\n'
-      '4. 色情低俗、性暗示、荤段子；\n'
-      '5. 血腥、暴力、恐怖、恶心、猎奇等引起生理不适的内容；\n'
-      '6. 广告推广、诈骗、违法与垃圾信息；\n'
-      '7. 其他让普通人明显反感、不适的内容。\n'
-      '注意：正常的批评、吐槽、负面评价、不同观点、玩梗不属于令人不适，不要误判。';
+      '2. 地域、性别、种族、职业、外貌、IP 属地等歧视与仇恨言论；\n'
+      '3. 阴阳怪气、引战、恶意嘲讽、反讽贬低、抬杠、挑动对立，'
+      '包括拿 IP 属地、地域说事的攻击与阴阳；\n'
+      '4. 说教、居高临下地教训或指点他人、爹味发言；\n'
+      '5. 隐含贬义、含沙射影、指桑骂槐、暗讽等不明显的贬低；\n'
+      '6. 色情低俗、性暗示、荤段子；\n'
+      '7. 血腥、暴力、恐怖、恶心、猎奇等引起生理不适的内容；\n'
+      '8. 广告推广、诈骗、违法与垃圾信息；\n'
+      '9. 其他让普通人明显反感、不适的内容。\n'
+      '注意：正常的批评、吐槽、负面评价、不同观点、玩梗不属于令人不适，不要误判；'
+      '但说教、隐含贬义、引战（含 IP 属地引战）都要判定为令人不适。';
 
   final RxMap<String, AiReplyVerdict> verdicts =
       <String, AiReplyVerdict>{}.obs;
@@ -54,9 +59,15 @@ class AiReplyFilterService {
 
   final Map<String, DateTime> _failedAt = {};
 
+  final Map<String, String> _retryTexts = {};
+
   final Map<String, List<Object?>> _cache = {};
 
   Timer? _timer;
+
+  Timer? _retryTimer;
+
+  Duration _retryDelay = _retryCooldown;
 
   bool _processing = false;
   bool _persistScheduled = false;
@@ -89,20 +100,18 @@ class AiReplyFilterService {
         ? defaultSystemPrompt
         : '$defaultSystemPrompt\n'
               '额外过滤标准（用户自定义，优先遵守）：$extra';
-    final buffer = StringBuffer()
-      ..writeln(
-        '请逐条审查下面 ${texts.length} 条评论，只输出一个 JSON 数组，'
-        '不要输出任何其他内容。',
-      )
-      ..writeln(
-        '数组元素格式：{"i":序号,"u":是否令人不适,"r":"原因"}；'
-        '序号从 1 开始，u 为布尔值，r 为不超过 10 字的原因（不令人不适时留空字符串）。',
-      )
-      ..writeln('评论列表：');
-    for (var i = 0; i < texts.length; i++) {
-      buffer.writeln('${i + 1}. ${texts[i]}');
-    }
-    return (system, buffer.toString());
+    final payload = jsonEncode([
+      for (var i = 0; i < texts.length; i++) {'i': i, 'text': texts[i]},
+    ]);
+    final user =
+        '请逐条审查下面 JSON 数组中的评论，严格只输出一个 JSON 数组，'
+        '不要输出任何其他文字。\n'
+        '输出元素格式：{"i":评论编号,"u":是否令人不适,"r":"原因"}；'
+        'i 必须等于输入中的编号，u 为布尔值，'
+        'r 为不超过 10 字的原因（不令人不适时留空字符串）。\n'
+        '必须审查每一条评论并逐一输出结果，不要遗漏。\n'
+        '待审查评论（JSON 数组，i 为编号）：$payload';
+    return (system, user);
   }
 
   @visibleForTesting
@@ -124,16 +133,16 @@ class AiReplyFilterService {
       return const {};
     }
     if (decoded is! List) return const {};
-    final result = <int, AiReplyVerdict>{};
+    final zeroBased = <int, AiReplyVerdict>{};
+    final oneBased = <int, AiReplyVerdict>{};
     for (final item in decoded) {
       if (item is! Map) continue;
       final index = switch (item['i'] ?? item['index'] ?? item['id']) {
         final int value => value,
         final num value => value.toInt(),
-        final String value => int.tryParse(value) ?? -1,
-        _ => -1,
+        final String value => int.tryParse(value) ?? -9999,
+        _ => -9999,
       };
-      if (index < 1 || index > count) continue;
       final rawUnsafe = item['u'] ?? item['unsafe'];
       final unsafe =
           rawUnsafe == true ||
@@ -144,9 +153,16 @@ class AiReplyFilterService {
       if (reason.length > _maxReasonLength) {
         reason = reason.substring(0, _maxReasonLength);
       }
-      result[index] = AiReplyVerdict(unsafe: unsafe, reason: reason);
+      final verdict = AiReplyVerdict(unsafe: unsafe, reason: reason);
+      if (index >= 0 && index < count) {
+        zeroBased[index] = verdict;
+      }
+      if (index >= 1 && index <= count) {
+        oneBased[index - 1] = verdict;
+      }
     }
-    return result;
+    if (zeroBased.length >= oneBased.length) return zeroBased;
+    return oneBased;
   }
 
   void init() {
@@ -201,7 +217,7 @@ class AiReplyFilterService {
         DateTime.now().difference(failedAt) < _retryCooldown) {
       return;
     }
-    _pending[hash] = _truncate(text);
+    _pending[hash] = _truncate(normalize(text));
     if (!(_timer?.isActive ?? false)) {
       _timer = Timer(_debounce, _flush);
     }
@@ -223,7 +239,11 @@ class AiReplyFilterService {
     verdicts.clear();
     _cache.clear();
     _pending.clear();
+    _retryTexts.clear();
     _failedAt.clear();
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryDelay = _retryCooldown;
     _schedulePersist();
   }
 
@@ -231,6 +251,10 @@ class AiReplyFilterService {
     verdicts.clear();
     _cache.clear();
     _failedAt.clear();
+    _retryTexts.clear();
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryDelay = _retryCooldown;
     try {
       await GStorage.localCache.delete(LocalCacheKey.aiReplyFilterCache);
       _persist();
@@ -258,10 +282,10 @@ class AiReplyFilterService {
   }
 
   Future<AiReplyVerdict?> checkNow(String text) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return null;
-    final results = await classifyTexts([_truncate(trimmed)]);
-    return results[1];
+    final normalized = normalize(text);
+    if (normalized.isEmpty) return null;
+    final results = await classifyTexts([_truncate(normalized)]);
+    return results[0];
   }
 
   Future<void> _flush() async {
@@ -281,20 +305,28 @@ class AiReplyFilterService {
 
     _processing = true;
     final now = DateTime.now();
+    var success = false;
+    var hasMissing = false;
     try {
       final results = await classifyTexts(
         batch.map((e) => e.value).toList(),
       );
+      success = true;
+      _retryDelay = _retryCooldown;
       final fingerprint = criteriaFingerprint(Pref.aiReplyFilterCriteria);
       final timestamp = now.millisecondsSinceEpoch;
       for (var i = 0; i < batch.length; i++) {
         final hash = batch[i].key;
-        final verdict = results[i + 1];
+        final verdict = results[i];
         if (verdict == null) {
+          hasMissing = true;
           _failedAt[hash] = now;
+          _queueRetry(hash, batch[i].value);
           continue;
         }
         verdicts[hash] = verdict;
+        _failedAt.remove(hash);
+        _retryTexts.remove(hash);
         _cache[hash] = [
           verdict.unsafe ? 1 : 0,
           verdict.reason,
@@ -308,16 +340,78 @@ class AiReplyFilterService {
       logger.e('AI 评论过滤请求失败', error: e, stackTrace: s);
       for (final entry in batch) {
         _failedAt[entry.key] = now;
+        _queueRetry(entry.key, entry.value);
       }
     } finally {
       for (final entry in batch) {
         _inFlight.remove(entry.key);
       }
       _processing = false;
+      if (hasMissing || !success) {
+        _scheduleRetry();
+      }
       if (_pending.isNotEmpty) {
         _timer = Timer(Duration.zero, _flush);
       }
     }
+  }
+
+  void _queueRetry(String hash, String text) {
+    if (_retryTexts.length >= _maxRetryEntries &&
+        !_retryTexts.containsKey(hash)) {
+      _retryTexts.remove(_retryTexts.keys.first);
+    }
+    _retryTexts[hash] = text;
+  }
+
+  void _scheduleRetry() {
+    if (_retryTimer?.isActive ?? false) return;
+    _retryTimer = Timer(_retryDelay, () {
+      _retryTimer = null;
+      if (!enabled) {
+        _retryTexts.clear();
+        return;
+      }
+      for (final entry in _retryTexts.entries) {
+        if (verdicts.containsKey(entry.key) ||
+            allowed.containsKey(entry.key)) {
+          continue;
+        }
+        _failedAt.remove(entry.key);
+        _pending[entry.key] = entry.value;
+      }
+      _retryTexts.clear();
+      if (!(_timer?.isActive ?? false)) {
+        _timer = Timer(Duration.zero, _flush);
+      }
+    });
+    final next = _retryDelay * 2;
+    _retryDelay = next > const Duration(minutes: 10)
+        ? const Duration(minutes: 10)
+        : next;
+  }
+
+  Future<AiReplyVerdict?> recheck(String text) async {
+    final normalized = normalize(text);
+    if (normalized.isEmpty) return null;
+    final hash = contentHash(normalized);
+    final results = await classifyTexts([_truncate(normalized)]);
+    final verdict = results[0];
+    if (verdict == null) return null;
+    allowed.remove(hash);
+    revealed.remove(hash);
+    verdicts[hash] = verdict;
+    _failedAt.remove(hash);
+    _retryTexts.remove(hash);
+    _cache[hash] = [
+      verdict.unsafe ? 1 : 0,
+      verdict.reason,
+      DateTime.now().millisecondsSinceEpoch,
+      criteriaFingerprint(Pref.aiReplyFilterCriteria),
+    ];
+    _trimCache();
+    _schedulePersist();
+    return verdict;
   }
 
   void _trimCache() {

@@ -36,10 +36,10 @@ List<SettingsModel> get replySettings => [
     setUidsMap: UserWhitelist.save,
     onUpdate: () {},
   ),
-  SwitchModel(
+  const SwitchModel(
     title: 'AI 评论过滤',
     subtitle: '调用 AI 大模型过滤让人不适的评论（先显示，判定后折叠）',
-    leading: const Icon(Icons.auto_awesome),
+    leading: Icon(Icons.auto_awesome),
     setKey: SettingBoxKey.enableAiReplyFilter,
     defaultVal: false,
   ),

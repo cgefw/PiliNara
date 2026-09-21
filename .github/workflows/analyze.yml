@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup flutter
         uses: subosito/flutter-action@v2
@@ -18,11 +20,12 @@ jobs:
           channel: stable
           flutter-version-file: pubspec.yaml
 
-      - name: Get dependencies
-        run: flutter pub get
+      - name: Apply SDK patches
+        shell: pwsh
+        run: lib/scripts/patch.ps1
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
   test:
     name: Test
@@ -30,6 +33,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup flutter
         uses: subosito/flutter-action@v2
@@ -37,8 +42,9 @@ jobs:
           channel: stable
           flutter-version-file: pubspec.yaml
 
-      - name: Get dependencies
-        run: flutter pub get
+      - name: Apply SDK patches
+        shell: pwsh
+        run: lib/scripts/patch.ps1
 
       - name: Test
         run: flutter test

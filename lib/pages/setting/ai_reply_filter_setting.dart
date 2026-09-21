@@ -172,10 +172,10 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
               ),
             ),
           ),
-          SetSwitchItem(
+          const SetSwitchItem(
             title: '启用 AI 评论过滤',
             subtitle: '评论先正常显示，AI 判定为令人不适后折叠',
-            leading: const Icon(Icons.auto_awesome),
+            leading: Icon(Icons.auto_awesome),
             setKey: SettingBoxKey.enableAiReplyFilter,
             defaultVal: false,
           ),

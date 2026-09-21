@@ -231,6 +231,7 @@ class AiChatService {
     required List<Map<String, String>> messages,
     String? model,
     Duration? receiveTimeout,
+    Map<String, dynamic>? extraBody,
   }) async {
     final baseUrl = _baseUrl();
     if (baseUrl.isEmpty) throw Exception('请先配置 API 地址');
@@ -246,6 +247,7 @@ class AiChatService {
           'model': useModel,
           'messages': messages,
           'stream': false,
+          if (extraBody != null) ...extraBody,
         }),
         options: _options(receiveTimeout: receiveTimeout),
       );

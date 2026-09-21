@@ -207,7 +207,11 @@ abstract final class SettingBoxKey {
 
   static const String enableAiReplyFilter = 'enableAiReplyFilter',
       aiReplyFilterCriteria = 'aiReplyFilterCriteria',
-      aiReplyFilterRevealFiltered = 'aiReplyFilterRevealFiltered';
+      aiReplyFilterRevealFiltered = 'aiReplyFilterRevealFiltered',
+      enableAiReplyFilterThinking = 'enableAiReplyFilterThinking',
+      aiReplyFilterThinkingParam = 'aiReplyFilterThinkingParam',
+      aiReplyFilterBatchSize = 'aiReplyFilterBatchSize',
+      aiReplyFilterConcurrency = 'aiReplyFilterConcurrency';
 
   static const String minimizeOnExit = 'minimizeOnExit',
       windowSize = 'windowSize',

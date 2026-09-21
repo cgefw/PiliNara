@@ -17,16 +17,21 @@ class AiReplyVerdict {
   final String reason;
 }
 
+enum AiThinkingParam {
+  enableThinking,
+  thinkingType,
+  reasoningEffort,
+}
+
 class AiReplyFilterService {
   AiReplyFilterService._();
 
   static final AiReplyFilterService instance = AiReplyFilterService._();
 
-  static const int _batchSize = 20;
-  static const int _maxConcurrent = 3;
   static const int _maxCacheEntries = 1500;
   static const int _maxRetryEntries = 200;
   static const int _maxTextLength = 500;
+  static const int _prefetchLimit = 20;
   static const int _maxReasonLength = 30;
   static const Duration _debounce = Duration(milliseconds: 350);
   static const Duration _retryCooldown = Duration(seconds: 60);
@@ -79,6 +84,12 @@ class AiReplyFilterService {
   static bool get apiReady =>
       Pref.aiApiUrl.trim().isNotEmpty && Pref.aiModel.trim().isNotEmpty;
 
+  int get _batchSize => Pref.aiReplyFilterBatchSize.clamp(5, 50);
+
+  int get _maxConcurrent => Pref.aiReplyFilterConcurrency.clamp(1, 8);
+
+  static int get prefetchLimit => _prefetchLimit;
+
   int get cacheCount => verdicts.length;
 
   static String normalize(String text) =>
@@ -89,6 +100,18 @@ class AiReplyFilterService {
 
   static String criteriaFingerprint([String criteria = '']) =>
       md5.convert(utf8.encode('$defaultSystemPrompt\n$criteria')).toString();
+
+  static Map<String, dynamic>? buildThinkingParams(bool enabled, int param) {
+    if (!enabled) return null;
+    final index = param.clamp(0, AiThinkingParam.values.length - 1);
+    return switch (AiThinkingParam.values[index]) {
+      AiThinkingParam.enableThinking => {'enable_thinking': true},
+      AiThinkingParam.thinkingType => {
+        'thinking': {'type': 'enabled'},
+      },
+      AiThinkingParam.reasoningEffort => {'reasoning_effort': 'low'},
+    };
+  }
 
   static String _truncate(String text) =>
       text.length > _maxTextLength ? text.substring(0, _maxTextLength) : text;
@@ -289,6 +312,10 @@ class AiReplyFilterService {
         {'role': 'user', 'content': user},
       ],
       receiveTimeout: const Duration(seconds: 30),
+      extraBody: buildThinkingParams(
+        Pref.enableAiReplyFilterThinking,
+        Pref.aiReplyFilterThinkingParam,
+      ),
     );
     return parseVerdicts(content, texts.length);
   }

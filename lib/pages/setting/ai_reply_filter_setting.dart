@@ -117,6 +117,100 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
     SmartDialog.showToast('已清除');
   }
 
+  String _thinkingParamLabel(int value) => switch (value) {
+    0 => 'enable_thinking（通义/硅基流动等）',
+    1 => 'thinking.type（火山方舟/DeepSeek 等）',
+    _ => 'reasoning_effort: low（OpenAI o 系列）',
+  };
+
+  Future<void> _selectThinkingParam() async {
+    final value = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Thinking 参数格式'),
+        children: [
+          for (var i = 0; i < 3; i++)
+            SimpleDialogOption(
+              onPressed: () => Get.back(result: i),
+              child: Text(
+                _thinkingParamLabel(i),
+                style: const TextStyle(fontSize: 14),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    Pref.aiReplyFilterThinkingParam = value;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _editBatchSize() => _editIntSetting(
+    title: '单批评论数',
+    value: Pref.aiReplyFilterBatchSize,
+    min: 5,
+    max: 50,
+    divisions: 9,
+    suffix: ' 条',
+    onConfirm: (value) => Pref.aiReplyFilterBatchSize = value,
+  );
+
+  Future<void> _editConcurrency() => _editIntSetting(
+    title: '并行请求数',
+    value: Pref.aiReplyFilterConcurrency,
+    min: 1,
+    max: 8,
+    divisions: 7,
+    suffix: ' 个',
+    onConfirm: (value) => Pref.aiReplyFilterConcurrency = value,
+  );
+
+  Future<void> _editIntSetting({
+    required String title,
+    required int value,
+    required int min,
+    required int max,
+    required int divisions,
+    required String suffix,
+    required ValueChanged<int> onConfirm,
+  }) async {
+    var current = value;
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$current$suffix'),
+              Slider(
+                value: current.toDouble(),
+                min: min.toDouble(),
+                max: max.toDouble(),
+                divisions: divisions,
+                label: '$current$suffix',
+                onChanged: (value) =>
+                    setDialogState(() => current = value.round()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: Get.back, child: const Text('取消')),
+            TextButton(
+              onPressed: () {
+                onConfirm(current);
+                Get.back();
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -214,6 +308,38 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             subtitle: Obx(() => Text('已缓存 ${service.cacheCount} 条判定结果')),
             onTap: _clearCache,
           ),
+          const Divider(),
+          SwitchListTile(
+            title: const Text('启用 Thinking 推理'),
+            subtitle: const Text('模型先推理再判定，更准但更慢，需接口支持'),
+            secondary: const Icon(Icons.psychology_outlined),
+            value: Pref.enableAiReplyFilterThinking,
+            onChanged: (value) {
+              Pref.enableAiReplyFilterThinking = value;
+              setState(() {});
+            },
+          ),
+          ListTile(
+            enabled: Pref.enableAiReplyFilterThinking,
+            leading: const Icon(Icons.tune),
+            title: const Text('Thinking 参数格式'),
+            subtitle: Text(
+              _thinkingParamLabel(Pref.aiReplyFilterThinkingParam),
+            ),
+            onTap: _selectThinkingParam,
+          ),
+          ListTile(
+            leading: const Icon(Icons.batch_prediction_outlined),
+            title: const Text('单批评论数'),
+            subtitle: Text('每次请求最多送检 ${Pref.aiReplyFilterBatchSize} 条'),
+            onTap: _editBatchSize,
+          ),
+          ListTile(
+            leading: const Icon(Icons.bolt_outlined),
+            title: const Text('并行请求数'),
+            subtitle: Text('同时进行 ${Pref.aiReplyFilterConcurrency} 个批次请求'),
+            onTap: _editConcurrency,
+          ),
           const SizedBox(height: 8),
           Card(
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -222,12 +348,13 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 '说明：\n'
-                '• 进入视频页会先检测首屏约 20 条评论，其余在评论区下滑加载时继续检测\n'
-                '• 只显示通过检测的评论；检测期间暂不显示，结果返回后逐条出现，失败自动重试\n'
+                '• 进入视频先检测首屏约 20 条，评论区下滑时会自动预检下一页\n'
+                '• 只显示通过检测的评论；检测中的评论显示为骨架占位，结果返回后逐条出现\n'
                 '• 被过滤的评论默认完全不显示，可开启「显示被过滤的评论」查看\n'
                 '• 长按任意评论可选择「AI 重新检测」，忽略缓存强制复查\n'
+                '• 判定结果在本地缓存并跨视频共享，相同内容只判定一次\n'
                 '• 仅评论文本会发送到所配置的 AI 接口，不会上传账号信息\n'
-                '• 判定结果缓存在本地，同一条评论只检测一次，修改过滤标准后自动重判',
+                '• 修改过滤标准后缓存会自动失效并重新判定',
                 style: theme.textTheme.bodySmall,
               ),
             ),

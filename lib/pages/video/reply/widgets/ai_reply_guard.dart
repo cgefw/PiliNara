@@ -29,7 +29,7 @@ class AiReplyGuard extends StatelessWidget {
       if (verdict == null) {
         if (service.isFailed(hash)) return child;
         service.trackHash(hash, text);
-        return const SizedBox.shrink();
+        return _ReplyPending(isSubReply: isSubReply);
       }
       if (!verdict.unsafe) return child;
       if (!Pref.aiReplyFilterRevealFiltered) {
@@ -84,6 +84,67 @@ class AiReplyGuard extends StatelessWidget {
               Get.back();
             },
             child: const Text('显示'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyPending extends StatelessWidget {
+  const _ReplyPending({required this.isSubReply});
+
+  final bool isSubReply;
+
+  static Widget _bar(Color color, double width, double height) =>
+      Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ColorScheme.of(
+      context,
+    ).onSurface.withValues(alpha: 0.07);
+    if (isSubReply) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: Row(
+          children: [
+            _bar(color, 90, 12),
+            const SizedBox(width: 8),
+            Expanded(child: _bar(color, double.infinity, 12)),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 14, 16, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _bar(color, 80, 10),
+                const SizedBox(height: 8),
+                _bar(color, double.infinity, 12),
+                const SizedBox(height: 6),
+                _bar(color, 160, 12),
+              ],
+            ),
           ),
         ],
       ),

@@ -121,4 +121,28 @@ void main() {
       );
     });
   });
+
+  group('buildThinkingParams', () {
+    test('returns null when disabled', () {
+      expect(AiReplyFilterService.buildThinkingParams(false, 0), isNull);
+    });
+
+    test('returns params by mode', () {
+      expect(AiReplyFilterService.buildThinkingParams(true, 0), {
+        'enable_thinking': true,
+      });
+      expect(AiReplyFilterService.buildThinkingParams(true, 1), {
+        'thinking': {'type': 'enabled'},
+      });
+      expect(AiReplyFilterService.buildThinkingParams(true, 2), {
+        'reasoning_effort': 'low',
+      });
+    });
+
+    test('clamps out-of-range mode', () {
+      expect(AiReplyFilterService.buildThinkingParams(true, 99), {
+        'reasoning_effort': 'low',
+      });
+    });
+  });
 }

@@ -82,6 +82,32 @@ abstract final class ReplyGrpc {
     }
   }
 
+  static final Set<String> _aiPrefetchedCursors = {};
+
+  static void _prefetchAiNextPage({
+    required int type,
+    required int oid,
+    required Mode mode,
+    required Int64? cursorNext,
+  }) {
+    if (cursorNext == null || cursorNext == Int64.ZERO) return;
+    if (!AiReplyFilterService.enabled) return;
+    final key = '$type:$oid:${cursorNext.toInt()}';
+    if (_aiPrefetchedCursors.length > 200) {
+      _aiPrefetchedCursors.clear();
+    }
+    if (!_aiPrefetchedCursors.add(key)) return;
+    mainList(
+      type: type,
+      oid: oid,
+      mode: mode,
+      offset: null,
+      cursorNext: cursorNext,
+      trackLimit: AiReplyFilterService.prefetchLimit,
+      aiPrefetchNext: true,
+    );
+  }
+
   static Future<void> prefetchAiReplyFilter({
     required int oid,
     int type = 1,
@@ -95,7 +121,8 @@ abstract final class ReplyGrpc {
           : Mode.MAIN_LIST_HOT,
       offset: null,
       cursorNext: null,
-      trackLimit: 20,
+      trackLimit: AiReplyFilterService.prefetchLimit,
+      aiPrefetchNext: true,
     );
   }
 
@@ -106,6 +133,7 @@ abstract final class ReplyGrpc {
     required String? offset,
     required Int64? cursorNext,
     int? trackLimit,
+    bool aiPrefetchNext = false,
   }) async {
     final res = await GrpcReq.request(
       GrpcUrl.mainList,
@@ -151,6 +179,14 @@ abstract final class ReplyGrpc {
         trackAiReplyFilter([response.upTop], limit: trackLimit);
       }
       trackAiReplyFilter(response.replies, limit: trackLimit);
+      if (!aiPrefetchNext && !response.cursor.isEnd) {
+        _prefetchAiNextPage(
+          type: type,
+          oid: oid,
+          mode: mode,
+          cursorNext: response.cursor.next,
+        );
+      }
     }
     return res;
   }

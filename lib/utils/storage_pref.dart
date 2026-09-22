@@ -1644,6 +1644,14 @@ abstract final class Pref {
   static set aiReplyFilterCriteria(String value) =>
       _setting.put(SettingBoxKey.aiReplyFilterCriteria, value);
 
+  static bool get aiReplyFilterShowBeforeVerdict => _setting.get(
+    SettingBoxKey.aiReplyFilterShowBeforeVerdict,
+    defaultValue: false,
+  );
+
+  static set aiReplyFilterShowBeforeVerdict(bool value) =>
+      _setting.put(SettingBoxKey.aiReplyFilterShowBeforeVerdict, value);
+
   static bool get aiReplyFilterRevealFiltered => _setting.get(
     SettingBoxKey.aiReplyFilterRevealFiltered,
     defaultValue: false,
@@ -1674,7 +1682,7 @@ abstract final class Pref {
 
   static int get aiReplyFilterThinkingParam => _setting.get(
     SettingBoxKey.aiReplyFilterThinkingParam,
-    defaultValue: 0,
+    defaultValue: 4,
   );
 
   static set aiReplyFilterThinkingParam(int value) =>

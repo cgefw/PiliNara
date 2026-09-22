@@ -172,6 +172,7 @@ abstract class CommonIntroController extends GetxController
       if (oid == null || oid == 0) return;
       AiReplyFilterService.instance.registerVideo(
         oid,
+        type: videoDetailCtr.videoType.replyType,
         title: title,
         desc: desc,
       );
@@ -191,7 +192,11 @@ abstract class CommonIntroController extends GetxController
           .where((e) => e.isNotEmpty)
           .toList();
       if (tags == null || tags.isEmpty) return;
-      AiReplyFilterService.instance.registerVideo(oid, tags: tags);
+      AiReplyFilterService.instance.registerVideo(
+        oid,
+        type: videoDetailCtr.videoType.replyType,
+        tags: tags,
+      );
     } catch (_) {}
   }
 

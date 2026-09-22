@@ -46,6 +46,15 @@ class VideoReplyController extends ReplyController<MainListReply>
   );
 
   @override
+  Future<void> onRefresh() {
+    ReplyGrpc.invalidatePrefetch(
+      oid: isPugv ? videoCtr.epId! : aid,
+      type: videoType.replyType,
+    );
+    return super.onRefresh();
+  }
+
+  @override
   void onClose() {
     if (kDebugMode) {
       print(

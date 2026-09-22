@@ -3,11 +3,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('contentHash', () {
-    test('stable and ignores whitespace and case', () {
+    test('stable and ignores repeated whitespace', () {
       final a = AiReplyFilterService.contentHash('Hello  World');
-      final b = AiReplyFilterService.contentHash('  hello\tworld ');
+      final b = AiReplyFilterService.contentHash('  Hello\tWorld ');
       expect(a, b);
       expect(a, AiReplyFilterService.contentHash('Hello World'));
+    });
+
+    test('preserves case for meaning-sensitive text', () {
+      expect(
+        AiReplyFilterService.contentHash('US'),
+        isNot(AiReplyFilterService.contentHash('us')),
+      );
     });
 
     test('differs for different texts', () {
@@ -54,7 +61,8 @@ void main() {
     });
 
     test('parses fenced json with surrounding text', () {
-      const raw = '分析结果如下：\n'
+      const raw =
+          '分析结果如下：\n'
           '```json\n'
           '[{"i": 0, "u": 1, "r": "引战"}]\n'
           '```\n';

@@ -1276,6 +1276,9 @@ class ReplyItemGrpc extends StatelessWidget {
                 try {
                   final verdict = await AiReplyFilterService.instance.recheck(
                     message,
+                    oid: item.oid.toInt(),
+                    type: item.type.toInt(),
+                    sampleId: item.id.toString(),
                   );
                   SmartDialog.dismiss();
                   if (verdict == null) {

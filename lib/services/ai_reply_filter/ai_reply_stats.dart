@@ -15,7 +15,9 @@ class AiVideoStat {
     this.total = 0,
     this.unsafe = 0,
     required this.ts,
-  });
+    this.fingerprint = '',
+    Map<String, bool>? samples,
+  }) : samples = samples ?? {};
 
   final int oid;
   String? title;
@@ -23,6 +25,20 @@ class AiVideoStat {
   int total;
   int unsafe;
   int ts;
+  String fingerprint;
+  final Map<String, bool> samples;
+
+  bool recordSample(String id, bool value) {
+    final previous = samples[id];
+    if (previous == value) return false;
+    // Keep retained identities instead of evicting and counting them again.
+    if (previous == null && samples.length >= 1000) return false;
+    samples[id] = value;
+    if (previous == null) total++;
+    if (previous == true) unsafe--;
+    if (value) unsafe++;
+    return true;
+  }
 
   double get ratio => total == 0 ? 0 : unsafe / total;
 
@@ -32,13 +48,20 @@ class AiVideoStat {
     'total': total,
     'unsafe': unsafe,
     'ts': ts,
+    'fingerprint': fingerprint,
+    'samples': samples,
   };
 
   factory AiVideoStat.fromJson(int oid, Map<String, dynamic> json) =>
       AiVideoStat(
         oid: oid,
+        fingerprint: json['fingerprint']?.toString() ?? '',
+        samples: (json['samples'] as Map?)?.map(
+          (key, value) => MapEntry(key.toString(), value == true),
+        ),
         title: json['title']?.toString(),
-        tags: (json['tags'] as List?)
+        tags:
+            (json['tags'] as List?)
                 ?.map((e) => e.toString())
                 .where((e) => e.isNotEmpty)
                 .take(AiReplyStats._maxTagsPerVideo)
@@ -79,8 +102,19 @@ class AiReplyStats {
 
   final Map<int, AiVideoStat> _videos = {};
 
+  String _fingerprint = '';
+
+  void useFingerprint(String fingerprint) {
+    if (_fingerprint == fingerprint) return;
+    _fingerprint = fingerprint;
+    revision.value++;
+  }
+
+  Iterable<AiVideoStat> get _currentVideos =>
+      _videos.values.where((video) => video.fingerprint == _fingerprint);
+
   bool _loaded = false;
-  bool _persistScheduled = false;
+  Timer? _persistTimer;
 
   void init() {
     if (_loaded) return;
@@ -106,13 +140,13 @@ class AiReplyStats {
     }
   }
 
-  int get videoCount => _videos.length;
+  int get videoCount => _currentVideos.length;
 
   int get commentCount =>
-      _videos.values.fold(0, (sum, video) => sum + video.total);
+      _currentVideos.fold(0, (sum, video) => sum + video.total);
 
   int get unsafeCount =>
-      _videos.values.fold(0, (sum, video) => sum + video.unsafe);
+      _currentVideos.fold(0, (sum, video) => sum + video.unsafe);
 
   void registerVideo(int oid, {String? title, List<String>? tags}) {
     if (oid == 0 || !Pref.enableAiReplyStats) return;
@@ -130,6 +164,7 @@ class AiReplyStats {
       if (title != null && title.isNotEmpty) stat.title = title;
       if (safeTags != null && safeTags.isNotEmpty) stat.tags = safeTags;
     }
+    _trim();
     _schedulePersist();
     revision.value++;
   }
@@ -137,6 +172,7 @@ class AiReplyStats {
   void record(
     int oid, {
     required bool unsafe,
+    required String sampleId,
     String? title,
     List<String>? tags,
   }) {
@@ -160,8 +196,14 @@ class AiReplyStats {
         if (safeTags != null) stat.tags = safeTags;
       }
     }
-    stat.total++;
-    if (unsafe) stat.unsafe++;
+    if (stat.fingerprint != _fingerprint) {
+      stat
+        ..fingerprint = _fingerprint
+        ..samples.clear()
+        ..total = 0
+        ..unsafe = 0;
+    }
+    if (!stat.recordSample(sampleId, unsafe)) return;
     stat.ts = now;
     _trim();
     _schedulePersist();
@@ -170,7 +212,7 @@ class AiReplyStats {
 
   List<AiTagStat> tagStats({int minVideoSamples = 10, int minVideos = 3}) {
     final byTag = <String, List<AiVideoStat>>{};
-    for (final video in _videos.values) {
+    for (final video in _currentVideos) {
       if (video.total < minVideoSamples) continue;
       for (final tag in video.tags) {
         (byTag[tag] ??= []).add(video);
@@ -202,10 +244,14 @@ class AiReplyStats {
   }
 
   List<AiVideoStat> videosOfTag(String tag, {int minVideoSamples = 10}) {
-    final list = _videos.values
-        .where((video) => video.total >= minVideoSamples && video.tags.contains(tag))
-        .toList()
-      ..sort((a, b) => b.ratio.compareTo(a.ratio));
+    final list =
+        _currentVideos
+            .where(
+              (video) =>
+                  video.total >= minVideoSamples && video.tags.contains(tag),
+            )
+            .toList()
+          ..sort((a, b) => b.ratio.compareTo(a.ratio));
     return list;
   }
 
@@ -245,12 +291,12 @@ class AiReplyStats {
   }
 
   void _schedulePersist() {
-    if (_persistScheduled) return;
-    _persistScheduled = true;
-    Timer(const Duration(seconds: 2), () {
-      _persistScheduled = false;
-      _persist();
-    });
+    if (_persistTimer?.isActive ?? false) return;
+    _persistTimer = Timer(const Duration(seconds: 2), _persist);
+  }
+
+  void dispose() {
+    _persistTimer?.cancel();
   }
 
   void _persist() {

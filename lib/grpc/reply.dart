@@ -5,6 +5,8 @@ import 'package:PiliPlus/grpc/grpc_req.dart';
 import 'package:PiliPlus/grpc/url.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
+import 'package:PiliPlus/services/ai_reply_filter/reply_page_cache.dart';
+import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/user_whitelist.dart';
 import 'package:fixnum/fixnum.dart';
@@ -67,23 +69,43 @@ abstract final class ReplyGrpc {
     Iterable<ReplyInfo> replies, {
     int? limit,
     int? oid,
+    int type = 1,
   }) {
     if (!AiReplyFilterService.enabled) return;
     final service = AiReplyFilterService.instance;
     var count = 0;
     for (final reply in replies) {
-      if (limit != null && count >= limit) return;
-      service.track(reply.content.message, oid: oid);
+      if (limit != null && count >= limit) break;
+      service.track(
+        reply.content.message,
+        oid: oid ?? reply.oid.toInt(),
+        type: type,
+        sampleId: reply.id.toString(),
+      );
       count++;
       for (final sub in reply.replies) {
-        if (limit != null && count >= limit) return;
-        service.track(sub.content.message, oid: oid);
+        if (limit != null && count >= limit) break;
+        service.track(
+          sub.content.message,
+          oid: oid ?? sub.oid.toInt(),
+          type: type,
+          sampleId: sub.id.toString(),
+        );
         count++;
       }
     }
+    service.flush();
   }
 
-  static final Set<String> _aiPrefetchedCursors = {};
+  static final _pageCache = ReplyPageCache<LoadingState<MainListReply>>(
+    isSuccess: (result) => result.isSuccess,
+  );
+
+  static String _pagePrefix(int type, int oid) =>
+      '${Accounts.main.mid}:$type:$oid:';
+
+  static void invalidatePrefetch({required int oid, int type = 1}) =>
+      _pageCache.invalidate(_pagePrefix(type, oid));
 
   static void _prefetchAiNextPage({
     required int type,
@@ -93,18 +115,13 @@ abstract final class ReplyGrpc {
   }) {
     if (cursorNext == null || cursorNext == Int64.ZERO) return;
     if (!AiReplyFilterService.enabled) return;
-    final key = '$type:$oid:${cursorNext.toInt()}';
-    if (_aiPrefetchedCursors.length > 200) {
-      _aiPrefetchedCursors.clear();
-    }
-    if (!_aiPrefetchedCursors.add(key)) return;
     mainList(
       type: type,
       oid: oid,
       mode: mode,
       offset: null,
       cursorNext: cursorNext,
-      trackLimit: AiReplyFilterService.prefetchLimit,
+      trackLimit: 0,
       aiPrefetchNext: true,
       aiOid: oid,
     );
@@ -140,21 +157,30 @@ abstract final class ReplyGrpc {
     bool aiPrefetchNext = false,
     int? aiOid,
   }) async {
-    final res = await GrpcReq.request(
-      GrpcUrl.mainList,
-      MainListReq(
-        oid: Int64(oid),
-        type: Int64(type),
-        rpid: Int64.ZERO,
-        cursor: CursorReq(
-          mode: mode,
-          next: cursorNext,
+    final key = '${_pagePrefix(type, oid)}${mode.value}:${cursorNext ?? 0}';
+    final raw = await _pageCache.load(
+      key,
+      () => GrpcReq.request(
+        GrpcUrl.mainList,
+        MainListReq(
+          oid: Int64(oid),
+          type: Int64(type),
+          rpid: Int64.ZERO,
+          cursor: CursorReq(
+            mode: mode,
+            next: cursorNext,
+          ),
+          // mode: mode,
+          // pagination: offset == null ? null : FeedPagination(offset: offset),
         ),
-        // mode: mode,
-        // pagination: offset == null ? null : FeedPagination(offset: offset),
+        MainListReply.fromBuffer,
       ),
-      MainListReply.fromBuffer,
+      prefetch: aiPrefetchNext,
     );
+    // Filtering and controller insertion mutate protobuf lists. Never share them.
+    final res = raw is Success<MainListReply>
+        ? Success(raw.response.deepCopy())
+        : raw;
     if (res case Success(:final response)) {
       final upMid = response.subjectControl.upMid;
       // keyword filter
@@ -180,17 +206,14 @@ abstract final class ReplyGrpc {
           return hasMatch;
         });
       }
-      if (response.hasUpTop()) {
-        trackAiReplyFilter(
-          [response.upTop],
-          limit: trackLimit,
-          oid: aiOid,
-        );
-      }
       trackAiReplyFilter(
-        response.replies,
+        [
+          if (response.hasUpTop()) response.upTop,
+          ...response.replies,
+        ],
         limit: trackLimit,
-        oid: aiOid,
+        oid: aiOid ?? oid,
+        type: type,
       );
       if (!aiPrefetchNext && !response.cursor.isEnd) {
         _prefetchAiNextPage(
@@ -230,7 +253,7 @@ abstract final class ReplyGrpc {
       response.root.replies.removeWhere((item) {
         return needRemoveGrpc(item, upMid: upMid);
       });
-      trackAiReplyFilter([response.root, ...response.root.replies]);
+      trackAiReplyFilter([response.root], oid: oid, type: type);
     }
     return res;
   }
@@ -258,7 +281,7 @@ abstract final class ReplyGrpc {
       response.replies.removeWhere((item) {
         return needRemoveGrpc(item, upMid: upMid);
       });
-      trackAiReplyFilter(response.replies);
+      trackAiReplyFilter(response.replies, oid: oid, type: type);
     }
     return res;
   }

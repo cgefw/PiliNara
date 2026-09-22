@@ -11,31 +11,48 @@ class AiReplyGuard extends StatelessWidget {
     required this.reply,
     required this.child,
     this.isSubReply = false,
+    this.filterService,
   });
 
+  final AiReplyFilterService? filterService;
   final ReplyInfo reply;
   final Widget child;
   final bool isSubReply;
 
   @override
   Widget build(BuildContext context) {
-    if (!AiReplyFilterService.enabled) return child;
     final text = reply.content.message;
     if (text.trim().isEmpty) return child;
-    final service = AiReplyFilterService.instance;
-    final hash = AiReplyFilterService.contentHash(text);
+    final service = filterService ?? AiReplyFilterService.instance;
+    final hash = service.keyFor(
+      text,
+      oid: reply.oid.toInt(),
+      type: reply.type.toInt(),
+    );
     return Obx(() {
+      final _ = service.revision.value;
+      if (!AiReplyFilterService.enabled ||
+          service.isRevealed(hash, text: text)) {
+        return child;
+      }
       final verdict = service.verdictOfHash(hash);
       if (verdict == null) {
         if (service.isFailed(hash)) return child;
-        service.trackHash(hash, text);
+        service.trackHash(
+          hash,
+          text,
+          oid: reply.oid.toInt(),
+          type: reply.type.toInt(),
+          sampleId: reply.id.toString(),
+          priority: true,
+        );
+        if (Pref.aiReplyFilterShowBeforeVerdict) return child;
         return _ReplyPending(isSubReply: isSubReply);
       }
       if (!verdict.unsafe) return child;
       if (!Pref.aiReplyFilterRevealFiltered) {
         return const SizedBox.shrink();
       }
-      if (service.isRevealed(hash)) return child;
       void showDetail() => _showDetail(context, hash, verdict);
       void reveal() => service.reveal(hash);
       return isSubReply
@@ -53,7 +70,7 @@ class AiReplyGuard extends StatelessWidget {
     String hash,
     AiReplyVerdict verdict,
   ) {
-    final service = AiReplyFilterService.instance;
+    final service = filterService ?? AiReplyFilterService.instance;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -96,15 +113,14 @@ class _ReplyPending extends StatelessWidget {
 
   final bool isSubReply;
 
-  static Widget _bar(Color color, double width, double height) =>
-      Container(
-        width: width,
-        height: height,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(4),
-        ),
-      );
+  static Widget _bar(Color color, double width, double height) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: color,
+      borderRadius: BorderRadius.circular(4),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -183,9 +199,7 @@ class _ReplyFiltered extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  reason.isEmpty
-                      ? '已过滤可能令人不适的评论'
-                      : '已过滤可能令人不适的评论（$reason）',
+                  reason.isEmpty ? '已过滤可能令人不适的评论' : '已过滤可能令人不适的评论（$reason）',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, color: colorScheme.outline),

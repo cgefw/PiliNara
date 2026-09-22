@@ -208,6 +208,7 @@ abstract final class SettingBoxKey {
   static const String enableAiReplyFilter = 'enableAiReplyFilter',
       aiReplyFilterCriteria = 'aiReplyFilterCriteria',
       aiReplyFilterRevealFiltered = 'aiReplyFilterRevealFiltered',
+      aiReplyFilterShowBeforeVerdict = 'aiReplyFilterShowBeforeVerdict',
       aiReplyFilterSystemPrompt = 'aiReplyFilterSystemPrompt',
       aiReplyFilterUserPrompt = 'aiReplyFilterUserPrompt',
       enableAiReplyFilterThinking = 'enableAiReplyFilterThinking',

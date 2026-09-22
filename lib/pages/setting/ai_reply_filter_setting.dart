@@ -119,10 +119,11 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
   }
 
   String _thinkingParamLabel(int value) => switch (value) {
-    0 => 'thinking.type（DeepSeek/火山方舟等，推荐）',
+    4 => '自动识别（DeepSeek / 百炼 Qwen，推荐）',
+    0 => 'thinking.type（DeepSeek/火山方舟等）',
     1 => 'enable_thinking（通义/硅基流动等）',
     2 => 'reasoning_effort（OpenAI o 系列）',
-    _ => '不发送参数（用接口默认；DeepSeek 默认会思考）',
+    _ => '不发送参数（使用接口默认模式）',
   };
 
   String _promptPreview(String value, String fallback) {
@@ -137,7 +138,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
       builder: (context) => SimpleDialog(
         title: const Text('Thinking 参数格式'),
         children: [
-          for (var i = 0; i < 4; i++)
+          for (final i in [4, 0, 1, 2, 3])
             SimpleDialogOption(
               onPressed: () => Get.back(result: i),
               child: Text(
@@ -164,13 +165,16 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
     Pref.aiReplyFilterSystemPrompt = result;
     AiReplyFilterService.instance.onCriteriaChanged();
     if (mounted) setState(() {});
-    SmartDialog.showToast(result.isEmpty ? '已恢复默认 System 提示词' : '已保存，将按新提示词重新判定');
+    SmartDialog.showToast(
+      result.isEmpty ? '已恢复默认 System 提示词' : '已保存，将按新提示词重新判定',
+    );
   }
 
   Future<void> _editUserPrompt() async {
     final result = await _showTextDialog(
       title: '自定义 User 提示词',
-      hint: '留空恢复默认。可用占位符：{comments} 评论JSON、{count} 条数、'
+      hint:
+          '留空恢复默认。可用占位符：{comments} 评论JSON、{count} 条数、'
           '{title} 视频标题、{desc} 视频简介',
       initial: Pref.aiReplyFilterUserPrompt,
       maxLines: 10,
@@ -305,10 +309,25 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
           ),
           const SetSwitchItem(
             title: '启用 AI 评论过滤',
-            subtitle: '评论加载后立即送检，仅显示通过检测的评论',
+            subtitle: '评论加载后送检，显示时机可在下方选择',
             leading: Icon(Icons.auto_awesome),
             setKey: SettingBoxKey.enableAiReplyFilter,
             defaultVal: false,
+          ),
+          SwitchListTile(
+            title: const Text('先显示评论，再过滤'),
+            subtitle: Text(
+              Pref.aiReplyFilterShowBeforeVerdict
+                  ? '立即阅读，AI 判定为不适后隐藏；可能短暂看到不适评论'
+                  : '先显示占位，通过 AI 检测后才显示评论',
+            ),
+            secondary: const Icon(Icons.speed),
+            value: Pref.aiReplyFilterShowBeforeVerdict,
+            onChanged: (value) {
+              Pref.aiReplyFilterShowBeforeVerdict = value;
+              service.refreshSettings();
+              setState(() {});
+            },
           ),
           const SetSwitchItem(
             title: '显示被过滤的评论',
@@ -327,9 +346,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             leading: const Icon(Icons.tune),
             title: const Text('自定义过滤标准'),
             subtitle: Text(
-              criteria.isEmpty
-                  ? '默认：过滤辱骂、引战、说教、低俗、歧视等令人不适的内容'
-                  : criteria,
+              criteria.isEmpty ? '默认：过滤辱骂、引战、说教、低俗、歧视等令人不适的内容' : criteria,
             ),
             onTap: _editCriteria,
           ),
@@ -367,13 +384,39 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
           ListTile(
             leading: const Icon(Icons.delete_outline),
             title: const Text('清除过滤缓存'),
-            subtitle: Obx(() => Text('已缓存 ${service.cacheCount} 条判定结果')),
+            subtitle: Obx(
+              () => Text(
+                '当前配置 ${service.cacheCount} 条，共 ${service.totalCacheCount} 条',
+              ),
+            ),
             onTap: _clearCache,
+          ),
+          ListTile(
+            leading: const Icon(Icons.speed_outlined),
+            title: const Text('缓存与用量'),
+            subtitle: Obx(() {
+              service.metricsRevision.value;
+              final localRate = service.localHitRate;
+              final providerRate = service.providerHitRate;
+              final blocked = service.blockedStatus.value;
+              return Text(
+                '当前配置 · 本次运行\n'
+                '${blocked == null ? "" : "接口返回 HTTP $blocked，已暂停自动检测；请检查地址、模型、余额或 Key\n"}'
+                '本地命中 ${localRate == null ? "—" : "${(localRate * 100).toStringAsFixed(1)}%"}'
+                '（复用 ${service.localHits}，首次送检 ${service.localMisses}，合并 ${service.inFlightReuses}）\n'
+                '输入 ${service.inputTokens} / 输出 ${service.outputTokens} token\n'
+                '${providerRate == null ? "接口尚未提供缓存用量" : "接口缓存 ${(providerRate * 100).toStringAsFixed(1)}%（${service.cachedInputTokens}/${service.measuredInputTokens} 输入 token）"}',
+              );
+            }),
           ),
           const Divider(),
           SwitchListTile(
             title: const Text('启用 Thinking 推理'),
-            subtitle: const Text('DeepSeek 等接口默认思考且很慢，建议保持关闭'),
+            subtitle: Text(
+              service.apiPolicy.onlyThinking
+                  ? '当前模型只支持思考，开关无法关闭；追求速度可改用支持非思考的模型'
+                  : '评论分类建议关闭以减少等待和 token；Qwen 开启时使用流式请求',
+            ),
             secondary: const Icon(Icons.psychology_outlined),
             value: Pref.enableAiReplyFilterThinking,
             onChanged: (value) {
@@ -409,12 +452,15 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 '说明：\n'
-                '• 进入视频先检测首屏约 20 条，评论区下滑时会自动预检下一页\n'
-                '• 只显示通过检测的评论；检测中的评论显示为骨架占位，结果返回后逐条出现\n'
+                '• 进入视频预检首屏最多 20 条；后续页在实际加载时送检，减少无效调用\n'
+                '• 可选先检测后显示，或先显示再过滤；请求失败时暂时放行，最多自动重试一次\n'
                 '• 被过滤的评论默认完全不显示，可开启「显示被过滤的评论」查看\n'
-                '• 判定会带上视频标题、简介与标签；长按评论可选择「AI 重新检测」\n'
-                '• DeepSeek 默认开启思考且响应很慢，请把「Thinking 参数格式」设为 thinking.type，保持开关关闭\n'
-                '• 修改提示词/过滤标准后缓存自动失效并重新判定；判定结果跨视频共享',
+                '• 判定会带上视频标题与简介；长按评论可选择「AI 重新检测」\n'
+                '• 官方 DeepSeek / 百炼 Qwen 建议选择自动识别并关闭 Thinking；兼容网关可手动选择参数格式\n'
+                '• 同一视频的重复文本复用判定，不同视频隔离；默认使用精简 JSON 结果减少 token\n'
+                '• 常看的判定优先保留，切回旧配置可复用缓存；总容量最多 1500 条，清除会移除所有配置的判定\n'
+                '• 接口缓存由服务商决定；固定规则置于输入前部，不为凑缓存门槛增加提示词\n'
+                '• 新配置单独判定，统计只展示当前判定标准的数据',
                 style: theme.textTheme.bodySmall,
               ),
             ),

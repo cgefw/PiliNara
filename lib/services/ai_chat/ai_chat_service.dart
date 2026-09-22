@@ -247,7 +247,7 @@ class AiChatService {
           'model': useModel,
           'messages': messages,
           'stream': false,
-          if (extraBody != null) ...extraBody,
+          ...?extraBody,
         }),
         options: _options(receiveTimeout: receiveTimeout),
       );

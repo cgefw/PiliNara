@@ -1660,6 +1660,18 @@ abstract final class Pref {
   static set enableAiReplyFilterThinking(bool value) =>
       _setting.put(SettingBoxKey.enableAiReplyFilterThinking, value);
 
+  static String get aiReplyFilterSystemPrompt =>
+      _setting.get(SettingBoxKey.aiReplyFilterSystemPrompt, defaultValue: '');
+
+  static set aiReplyFilterSystemPrompt(String value) =>
+      _setting.put(SettingBoxKey.aiReplyFilterSystemPrompt, value);
+
+  static String get aiReplyFilterUserPrompt =>
+      _setting.get(SettingBoxKey.aiReplyFilterUserPrompt, defaultValue: '');
+
+  static set aiReplyFilterUserPrompt(String value) =>
+      _setting.put(SettingBoxKey.aiReplyFilterUserPrompt, value);
+
   static int get aiReplyFilterThinkingParam => _setting.get(
     SettingBoxKey.aiReplyFilterThinkingParam,
     defaultValue: 0,
@@ -1683,6 +1695,12 @@ abstract final class Pref {
 
   static set aiReplyFilterConcurrency(int value) =>
       _setting.put(SettingBoxKey.aiReplyFilterConcurrency, value);
+
+  static bool get enableAiReplyStats =>
+      _setting.get(SettingBoxKey.enableAiReplyStats, defaultValue: true);
+
+  static set enableAiReplyStats(bool value) =>
+      _setting.put(SettingBoxKey.enableAiReplyStats, value);
 
   static int get angleDegrees =>
       _setting.get(SettingBoxKey.angleDegrees, defaultValue: 30);

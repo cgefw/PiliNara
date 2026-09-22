@@ -66,17 +66,18 @@ abstract final class ReplyGrpc {
   static void trackAiReplyFilter(
     Iterable<ReplyInfo> replies, {
     int? limit,
+    int? oid,
   }) {
     if (!AiReplyFilterService.enabled) return;
     final service = AiReplyFilterService.instance;
     var count = 0;
     for (final reply in replies) {
       if (limit != null && count >= limit) return;
-      service.track(reply.content.message);
+      service.track(reply.content.message, oid: oid);
       count++;
       for (final sub in reply.replies) {
         if (limit != null && count >= limit) return;
-        service.track(sub.content.message);
+        service.track(sub.content.message, oid: oid);
         count++;
       }
     }
@@ -105,6 +106,7 @@ abstract final class ReplyGrpc {
       cursorNext: cursorNext,
       trackLimit: AiReplyFilterService.prefetchLimit,
       aiPrefetchNext: true,
+      aiOid: oid,
     );
   }
 
@@ -113,6 +115,7 @@ abstract final class ReplyGrpc {
     int type = 1,
   }) async {
     if (!AiReplyFilterService.enabled) return;
+    if (!Pref.showVideoReply || Pref.defaultShowComment) return;
     await mainList(
       type: type,
       oid: oid,
@@ -123,6 +126,7 @@ abstract final class ReplyGrpc {
       cursorNext: null,
       trackLimit: AiReplyFilterService.prefetchLimit,
       aiPrefetchNext: true,
+      aiOid: oid,
     );
   }
 
@@ -134,6 +138,7 @@ abstract final class ReplyGrpc {
     required Int64? cursorNext,
     int? trackLimit,
     bool aiPrefetchNext = false,
+    int? aiOid,
   }) async {
     final res = await GrpcReq.request(
       GrpcUrl.mainList,
@@ -176,9 +181,17 @@ abstract final class ReplyGrpc {
         });
       }
       if (response.hasUpTop()) {
-        trackAiReplyFilter([response.upTop], limit: trackLimit);
+        trackAiReplyFilter(
+          [response.upTop],
+          limit: trackLimit,
+          oid: aiOid,
+        );
       }
-      trackAiReplyFilter(response.replies, limit: trackLimit);
+      trackAiReplyFilter(
+        response.replies,
+        limit: trackLimit,
+        oid: aiOid,
+      );
       if (!aiPrefetchNext && !response.cursor.isEnd) {
         _prefetchAiNextPage(
           type: type,

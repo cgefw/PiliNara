@@ -94,55 +94,100 @@ void main() {
     });
   });
 
-  group('buildPrompt', () {
-    test('includes criteria and numbered json payload', () {
-      final (system, user) = AiReplyFilterService.buildPrompt(
-        ['第一条', '第二条'],
-        criteria: '过滤剧透',
-      );
-      expect(system, contains('过滤剧透'));
-      expect(user, contains('"i":0'));
-      expect(user, contains('"i":1'));
-      expect(user, contains('第一条'));
-      expect(user, contains('第二条'));
+  group('buildSystemPrompt', () {
+    test('appends custom criteria', () {
+      final result = AiReplyFilterService.buildSystemPrompt('base', '过滤剧透');
+      expect(result, contains('base'));
+      expect(result, contains('过滤剧透'));
     });
 
-    test('uses default system prompt without criteria', () {
-      final (system, _) = AiReplyFilterService.buildPrompt(['x']);
-      expect(system, AiReplyFilterService.defaultSystemPrompt);
+    test('keeps base without criteria', () {
+      expect(
+        AiReplyFilterService.buildSystemPrompt('base', '  '),
+        'base',
+      );
     });
   });
 
-  group('criteriaFingerprint', () {
-    test('changes with criteria', () {
+  group('buildUserPrompt', () {
+    test('replaces all placeholders', () {
+      final result = AiReplyFilterService.buildUserPrompt(
+        't:{title} d:{desc} n:{count} c:{comments}',
+        texts: ['第一条', '第二条'],
+        title: '标题',
+        desc: '简介',
+      );
+      expect(result, contains('t:标题'));
+      expect(result, contains('d:简介'));
+      expect(result, contains('n:2'));
+      expect(result, contains('"i":0'));
+      expect(result, contains('第一条'));
+    });
+
+    test('prepends context when template has no title/desc', () {
+      final result = AiReplyFilterService.buildUserPrompt(
+        '审查：{comments}',
+        texts: ['x'],
+        title: '标题',
+        desc: '简介',
+      );
+      expect(result, startsWith('视频标题：《标题》，简介：简介'));
+    });
+
+    test('appends payload when template lacks comments placeholder', () {
+      final result = AiReplyFilterService.buildUserPrompt(
+        '审查这些评论',
+        texts: ['x'],
+      );
+      expect(result, contains('"i":0'));
+    });
+  });
+
+  group('fingerprintOf', () {
+    test('changes with system or user prompt', () {
       expect(
-        AiReplyFilterService.criteriaFingerprint(),
-        isNot(AiReplyFilterService.criteriaFingerprint('新标准')),
+        AiReplyFilterService.fingerprintOf('a', 'b'),
+        isNot(AiReplyFilterService.fingerprintOf('a2', 'b')),
+      );
+      expect(
+        AiReplyFilterService.fingerprintOf('a', 'b'),
+        isNot(AiReplyFilterService.fingerprintOf('a', 'b2')),
       );
     });
   });
 
   group('buildThinkingParams', () {
-    test('returns null when disabled', () {
-      expect(AiReplyFilterService.buildThinkingParams(false, 0), isNull);
+    test('thinking.type enabled/disabled', () {
+      expect(AiReplyFilterService.buildThinkingParams(true, 0), {
+        'thinking': {'type': 'enabled'},
+      });
+      expect(AiReplyFilterService.buildThinkingParams(false, 0), {
+        'thinking': {'type': 'disabled'},
+      });
     });
 
-    test('returns params by mode', () {
-      expect(AiReplyFilterService.buildThinkingParams(true, 0), {
+    test('enable_thinking and reasoning_effort by switch', () {
+      expect(AiReplyFilterService.buildThinkingParams(true, 1), {
         'enable_thinking': true,
       });
-      expect(AiReplyFilterService.buildThinkingParams(true, 1), {
-        'thinking': {'type': 'enabled'},
+      expect(AiReplyFilterService.buildThinkingParams(false, 1), {
+        'enable_thinking': false,
       });
       expect(AiReplyFilterService.buildThinkingParams(true, 2), {
         'reasoning_effort': 'low',
       });
+      expect(AiReplyFilterService.buildThinkingParams(false, 2), {
+        'reasoning_effort': 'none',
+      });
+    });
+
+    test('none sends nothing', () {
+      expect(AiReplyFilterService.buildThinkingParams(true, 3), isNull);
+      expect(AiReplyFilterService.buildThinkingParams(false, 3), isNull);
     });
 
     test('clamps out-of-range mode', () {
-      expect(AiReplyFilterService.buildThinkingParams(true, 99), {
-        'reasoning_effort': 'low',
-      });
+      expect(AiReplyFilterService.buildThinkingParams(true, 99), isNull);
     });
   });
 }

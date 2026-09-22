@@ -480,6 +480,7 @@ class PgcIntroController extends CommonIntroController {
     videoDetail
       ..value.title = episode.showTitle
       ..refresh();
+    registerAiVideo(title: episode.showTitle, desc: pgcItem.evaluate);
     videoPlayerServiceHandler?.onVideoDetailChange(
       episode,
       cid.value,

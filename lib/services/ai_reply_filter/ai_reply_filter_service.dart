@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:PiliPlus/services/ai_chat/ai_chat_service.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_stats.dart';
 import 'package:PiliPlus/services/logger.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
@@ -18,9 +19,34 @@ class AiReplyVerdict {
 }
 
 enum AiThinkingParam {
-  enableThinking,
   thinkingType,
+  enableThinking,
   reasoningEffort,
+  none,
+}
+
+class _PendingComment {
+  const _PendingComment({
+    required this.text,
+    this.oid,
+    this.title,
+    this.desc,
+    this.tags,
+  });
+
+  final String text;
+  final int? oid;
+  final String? title;
+  final String? desc;
+  final List<String>? tags;
+}
+
+class _VideoMeta {
+  const _VideoMeta({this.title, this.desc, this.tags});
+
+  final String? title;
+  final String? desc;
+  final List<String>? tags;
 }
 
 class AiReplyFilterService {
@@ -31,6 +57,11 @@ class AiReplyFilterService {
   static const int _maxCacheEntries = 1500;
   static const int _maxRetryEntries = 200;
   static const int _maxTextLength = 500;
+  static const int _maxTitleLength = 80;
+  static const int _maxDescLength = 300;
+  static const int _maxTagLength = 30;
+  static const int _maxTags = 10;
+  static const int _maxVideoMeta = 500;
   static const int _prefetchLimit = 20;
   static const int _maxReasonLength = 30;
   static const Duration _debounce = Duration(milliseconds: 350);
@@ -52,6 +83,17 @@ class AiReplyFilterService {
       '注意：正常的批评、吐槽、负面评价、不同观点、玩梗不属于令人不适，不要误判；'
       '但说教、隐含贬义、引战（含 IP 属地引战）都要判定为令人不适。';
 
+  static const String defaultUserPrompt =
+      '请逐条审查下面 JSON 数组中的评论，严格只输出一个 JSON 数组，'
+      '不要输出任何其他文字。\n'
+      '输出元素格式：{"i":评论编号,"u":是否令人不适,"r":"原因"}；'
+      'i 必须等于输入中的编号，u 为布尔值，'
+      'r 为不超过 10 字的原因（不令人不适时留空字符串）。\n'
+      '视频标题：《{title}》\n'
+      '视频简介：{desc}\n'
+      '必须审查每一条评论并逐一输出结果，不要遗漏。\n'
+      '待审查评论（JSON 数组，i 为编号，共 {count} 条）：{comments}';
+
   final RxMap<String, AiReplyVerdict> verdicts =
       <String, AiReplyVerdict>{}.obs;
 
@@ -59,15 +101,17 @@ class AiReplyFilterService {
 
   final RxMap<String, bool> allowed = <String, bool>{}.obs;
 
-  final Map<String, String> _pending = {};
+  final Map<String, _PendingComment> _pending = {};
 
   final Set<String> _inFlight = {};
 
   final Map<String, DateTime> _failedAt = {};
 
-  final Map<String, String> _retryTexts = {};
+  final Map<String, _PendingComment> _retryTexts = {};
 
   final Map<String, List<Object?>> _cache = {};
+
+  final Map<int, _VideoMeta> _videoMeta = {};
 
   Timer? _timer;
 
@@ -92,52 +136,107 @@ class AiReplyFilterService {
 
   int get cacheCount => verdicts.length;
 
+  String get _systemTemplate {
+    final custom = Pref.aiReplyFilterSystemPrompt.trim();
+    return custom.isEmpty ? defaultSystemPrompt : custom;
+  }
+
+  String get _userTemplate {
+    final custom = Pref.aiReplyFilterUserPrompt.trim();
+    return custom.isEmpty ? defaultUserPrompt : custom;
+  }
+
+  String get _fingerprint => fingerprintOf(
+    buildSystemPrompt(_systemTemplate, Pref.aiReplyFilterCriteria),
+    _userTemplate,
+  );
+
   static String normalize(String text) =>
       text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
   static String contentHash(String text) =>
       md5.convert(utf8.encode(normalize(text).toLowerCase())).toString();
 
-  static String criteriaFingerprint([String criteria = '']) =>
-      md5.convert(utf8.encode('$defaultSystemPrompt\n$criteria')).toString();
+  static String fingerprintOf(String system, String user) =>
+      md5.convert(utf8.encode('$system\n$user')).toString();
+
+  static String buildSystemPrompt(String base, String criteria) {
+    final extra = criteria.trim();
+    if (extra.isEmpty) return base;
+    return '$base\n额外过滤标准（用户自定义，优先遵守）：$extra';
+  }
+
+  static String buildUserPrompt(
+    String template, {
+    required List<String> texts,
+    String? title,
+    String? desc,
+  }) {
+    final payload = jsonEncode([
+      for (var i = 0; i < texts.length; i++) {'i': i, 'text': texts[i]},
+    ]);
+    final safeTitle = title?.trim() ?? '';
+    final safeDesc = desc?.trim() ?? '';
+    final hasTitle = template.contains('{title}');
+    final hasDesc = template.contains('{desc}');
+    var result = template
+        .replaceAll('{count}', '${texts.length}')
+        .replaceAll('{title}', safeTitle)
+        .replaceAll('{desc}', safeDesc)
+        .replaceAll('{comments}', payload);
+    if (!hasTitle && !hasDesc && (safeTitle.isNotEmpty || safeDesc.isNotEmpty)) {
+      final buffer = StringBuffer();
+      if (safeTitle.isNotEmpty) buffer.write('视频标题：《$safeTitle》');
+      if (safeDesc.isNotEmpty) {
+        if (buffer.isNotEmpty) buffer.write('，');
+        buffer.write('简介：$safeDesc');
+      }
+      result = '${buffer.toString()}\n$result';
+    }
+    if (!template.contains('{comments}')) {
+      result = '$result\n$payload';
+    }
+    return result;
+  }
 
   static Map<String, dynamic>? buildThinkingParams(bool enabled, int param) {
-    if (!enabled) return null;
     final index = param.clamp(0, AiThinkingParam.values.length - 1);
     return switch (AiThinkingParam.values[index]) {
-      AiThinkingParam.enableThinking => {'enable_thinking': true},
       AiThinkingParam.thinkingType => {
-        'thinking': {'type': 'enabled'},
+        'thinking': {'type': enabled ? 'enabled' : 'disabled'},
       },
-      AiThinkingParam.reasoningEffort => {'reasoning_effort': 'low'},
+      AiThinkingParam.enableThinking => {'enable_thinking': enabled},
+      AiThinkingParam.reasoningEffort => {
+        'reasoning_effort': enabled ? 'low' : 'none',
+      },
+      AiThinkingParam.none => null,
     };
+  }
+
+  Map<String, dynamic>? _extraBody() {
+    final body = <String, dynamic>{};
+    final thinking = buildThinkingParams(
+      Pref.enableAiReplyFilterThinking,
+      Pref.aiReplyFilterThinkingParam,
+    );
+    if (thinking != null) body.addAll(thinking);
+    if (Pref.aiApiUrl.contains('deepseek')) {
+      body['response_format'] = {'type': 'json_object'};
+      if (!Pref.enableAiReplyFilterThinking) {
+        body['max_tokens'] = 4096;
+      }
+    }
+    return body.isEmpty ? null : body;
+  }
+
+  static String? _sanitize(String? value, int maxLength) {
+    final text = value == null ? '' : normalize(value);
+    if (text.isEmpty) return null;
+    return text.length > maxLength ? text.substring(0, maxLength) : text;
   }
 
   static String _truncate(String text) =>
       text.length > _maxTextLength ? text.substring(0, _maxTextLength) : text;
-
-  static (String, String) buildPrompt(
-    List<String> texts, {
-    String criteria = '',
-  }) {
-    final extra = criteria.trim();
-    final system = extra.isEmpty
-        ? defaultSystemPrompt
-        : '$defaultSystemPrompt\n'
-              '额外过滤标准（用户自定义，优先遵守）：$extra';
-    final payload = jsonEncode([
-      for (var i = 0; i < texts.length; i++) {'i': i, 'text': texts[i]},
-    ]);
-    final user =
-        '请逐条审查下面 JSON 数组中的评论，严格只输出一个 JSON 数组，'
-        '不要输出任何其他文字。\n'
-        '输出元素格式：{"i":评论编号,"u":是否令人不适,"r":"原因"}；'
-        'i 必须等于输入中的编号，u 为布尔值，'
-        'r 为不超过 10 字的原因（不令人不适时留空字符串）。\n'
-        '必须审查每一条评论并逐一输出结果，不要遗漏。\n'
-        '待审查评论（JSON 数组，i 为编号）：$payload';
-    return (system, user);
-  }
 
   @visibleForTesting
   static Map<int, AiReplyVerdict> parseVerdicts(String raw, int count) {
@@ -191,6 +290,7 @@ class AiReplyFilterService {
   }
 
   void init() {
+    AiReplyStats.instance.init();
     try {
       final raw = GStorage.localCache.get(LocalCacheKey.aiReplyFilterCache);
       if (raw is! String || raw.isEmpty) return;
@@ -204,7 +304,7 @@ class AiReplyFilterService {
       }
       final items = decoded['items'];
       if (items is Map) {
-        final fingerprint = criteriaFingerprint(Pref.aiReplyFilterCriteria);
+        final fingerprint = _fingerprint;
         items.forEach((key, value) {
           if (key is! String || value is! List || value.length < 4) return;
           if (value[3]?.toString() != fingerprint) return;
@@ -229,21 +329,21 @@ class AiReplyFilterService {
   bool isRevealed(String hash) =>
       revealed.containsKey(hash) || allowed.containsKey(hash);
 
-  void track(String text) {
+  void track(String text, {int? oid}) {
     if (!enabled) return;
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-    trackHash(contentHash(trimmed), trimmed);
+    trackHash(contentHash(trimmed), trimmed, oid: oid);
   }
 
-  void trackAll(Iterable<String> texts) {
+  void trackAll(Iterable<String> texts, {int? oid}) {
     if (!enabled) return;
     for (final text in texts) {
-      track(text);
+      track(text, oid: oid);
     }
   }
 
-  void trackHash(String hash, String text) {
+  void trackHash(String hash, String text, {int? oid}) {
     if (verdicts.containsKey(hash) || allowed.containsKey(hash)) return;
     if (_pending.containsKey(hash) || _inFlight.contains(hash)) return;
     final failedAt = _failedAt[hash];
@@ -251,10 +351,56 @@ class AiReplyFilterService {
         DateTime.now().difference(failedAt) < _retryCooldown) {
       return;
     }
-    _pending[hash] = _truncate(normalize(text));
+    final meta = oid == null ? null : _videoMeta[oid];
+    _pending[hash] = _PendingComment(
+      text: _truncate(normalize(text)),
+      oid: oid,
+      title: meta?.title,
+      desc: meta?.desc,
+      tags: meta?.tags,
+    );
     if (!(_timer?.isActive ?? false)) {
       _timer = Timer(_debounce, _pump);
     }
+  }
+
+  void registerVideo(
+    int oid, {
+    String? title,
+    String? desc,
+    List<String>? tags,
+  }) {
+    if (oid == 0) return;
+    final existing = _videoMeta[oid];
+    final meta = _VideoMeta(
+      title: _sanitize(title, _maxTitleLength) ?? existing?.title,
+      desc: _sanitize(desc, _maxDescLength) ?? existing?.desc,
+      tags: _sanitizeTags(tags) ?? existing?.tags,
+    );
+    _videoMeta[oid] = meta;
+    if (_videoMeta.length > _maxVideoMeta) {
+      _videoMeta.remove(_videoMeta.keys.first);
+    }
+    AiReplyStats.instance.registerVideo(
+      oid,
+      title: meta.title,
+      tags: meta.tags,
+    );
+  }
+
+  static List<String>? _sanitizeTags(List<String>? tags) {
+    if (tags == null) return null;
+    final result = <String>[];
+    for (final tag in tags) {
+      final text = normalize(tag);
+      if (text.isEmpty) continue;
+      final value = text.length > _maxTagLength
+          ? text.substring(0, _maxTagLength)
+          : text;
+      if (!result.contains(value)) result.add(value);
+      if (result.length >= _maxTags) break;
+    }
+    return result.isEmpty ? null : result;
   }
 
   void reveal(String hash) {
@@ -301,30 +447,70 @@ class AiReplyFilterService {
   Future<Map<int, AiReplyVerdict>> classifyTexts(
     List<String> texts, {
     String? criteria,
+    String? title,
+    String? desc,
   }) async {
-    final (system, user) = buildPrompt(
-      texts,
-      criteria: criteria ?? Pref.aiReplyFilterCriteria,
+    final (system, user) = (
+      buildSystemPrompt(
+        _systemTemplate,
+        criteria ?? Pref.aiReplyFilterCriteria,
+      ),
+      buildUserPrompt(
+        _userTemplate,
+        texts: texts,
+        title: title,
+        desc: desc,
+      ),
     );
     final content = await AiChatService.completeChat(
       messages: [
         {'role': 'system', 'content': system},
         {'role': 'user', 'content': user},
       ],
-      receiveTimeout: const Duration(seconds: 30),
-      extraBody: buildThinkingParams(
-        Pref.enableAiReplyFilterThinking,
-        Pref.aiReplyFilterThinkingParam,
-      ),
+      receiveTimeout: Pref.enableAiReplyFilterThinking
+          ? const Duration(seconds: 120)
+          : const Duration(seconds: 60),
+      extraBody: _extraBody(),
     );
     return parseVerdicts(content, texts.length);
   }
 
-  Future<AiReplyVerdict?> checkNow(String text) async {
+  Future<AiReplyVerdict?> checkNow(
+    String text, {
+    String? title,
+    String? desc,
+  }) async {
     final normalized = normalize(text);
     if (normalized.isEmpty) return null;
-    final results = await classifyTexts([_truncate(normalized)]);
+    final results = await classifyTexts(
+      [_truncate(normalized)],
+      title: title,
+      desc: desc,
+    );
     return results[0];
+  }
+
+  Future<AiReplyVerdict?> recheck(String text) async {
+    final normalized = normalize(text);
+    if (normalized.isEmpty) return null;
+    final hash = contentHash(normalized);
+    final results = await classifyTexts([_truncate(normalized)]);
+    final verdict = results[0];
+    if (verdict == null) return null;
+    allowed.remove(hash);
+    revealed.remove(hash);
+    verdicts[hash] = verdict;
+    _failedAt.remove(hash);
+    _retryTexts.remove(hash);
+    _cache[hash] = [
+      verdict.unsafe ? 1 : 0,
+      verdict.reason,
+      DateTime.now().millisecondsSinceEpoch,
+      _fingerprint,
+    ];
+    _trimCache();
+    _schedulePersist();
+    return verdict;
   }
 
   void _pump() {
@@ -339,8 +525,19 @@ class AiReplyFilterService {
   }
 
   void _startBatch() {
-    final batch = _pending.entries.take(_batchSize).toList();
-    if (batch.isEmpty) return;
+    final first = _pending.entries.first;
+    final title = first.value.title;
+    final desc = first.value.desc;
+    final oid = first.value.oid;
+    final batch = <MapEntry<String, _PendingComment>>[];
+    for (final entry in _pending.entries) {
+      if (batch.length >= _batchSize) break;
+      if (entry.value.oid == oid &&
+          entry.value.title == title &&
+          entry.value.desc == desc) {
+        batch.add(entry);
+      }
+    }
     for (final entry in batch) {
       _pending.remove(entry.key);
       _inFlight.add(entry.key);
@@ -350,18 +547,20 @@ class AiReplyFilterService {
   }
 
   Future<void> _runBatch(
-    List<MapEntry<String, String>> batch,
+    List<MapEntry<String, _PendingComment>> batch,
     DateTime now,
   ) async {
     var success = false;
     var hasMissing = false;
     try {
       final results = await classifyTexts(
-        batch.map((e) => e.value).toList(),
+        batch.map((e) => e.value.text).toList(),
+        title: batch.first.value.title,
+        desc: batch.first.value.desc,
       );
       success = true;
       _retryDelay = _retryCooldown;
-      final fingerprint = criteriaFingerprint(Pref.aiReplyFilterCriteria);
+      final fingerprint = _fingerprint;
       final timestamp = now.millisecondsSinceEpoch;
       for (var i = 0; i < batch.length; i++) {
         final hash = batch[i].key;
@@ -381,6 +580,15 @@ class AiReplyFilterService {
           timestamp,
           fingerprint,
         ];
+        final oid = batch[i].value.oid;
+        if (oid != null) {
+          AiReplyStats.instance.record(
+            oid,
+            unsafe: verdict.unsafe,
+            title: batch[i].value.title,
+            tags: batch[i].value.tags,
+          );
+        }
       }
       _trimCache();
       _schedulePersist();
@@ -402,12 +610,12 @@ class AiReplyFilterService {
     }
   }
 
-  void _queueRetry(String hash, String text) {
+  void _queueRetry(String hash, _PendingComment comment) {
     if (_retryTexts.length >= _maxRetryEntries &&
         !_retryTexts.containsKey(hash)) {
       _retryTexts.remove(_retryTexts.keys.first);
     }
-    _retryTexts[hash] = text;
+    _retryTexts[hash] = comment;
   }
 
   void _scheduleRetry() {
@@ -435,29 +643,6 @@ class AiReplyFilterService {
     _retryDelay = next > const Duration(minutes: 10)
         ? const Duration(minutes: 10)
         : next;
-  }
-
-  Future<AiReplyVerdict?> recheck(String text) async {
-    final normalized = normalize(text);
-    if (normalized.isEmpty) return null;
-    final hash = contentHash(normalized);
-    final results = await classifyTexts([_truncate(normalized)]);
-    final verdict = results[0];
-    if (verdict == null) return null;
-    allowed.remove(hash);
-    revealed.remove(hash);
-    verdicts[hash] = verdict;
-    _failedAt.remove(hash);
-    _retryTexts.remove(hash);
-    _cache[hash] = [
-      verdict.unsafe ? 1 : 0,
-      verdict.reason,
-      DateTime.now().millisecondsSinceEpoch,
-      criteriaFingerprint(Pref.aiReplyFilterCriteria),
-    ];
-    _trimCache();
-    _schedulePersist();
-    return verdict;
   }
 
   void _trimCache() {

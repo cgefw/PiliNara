@@ -1,16 +1,19 @@
 import 'dart:async' show FutureOr, Timer;
 
+import 'package:PiliPlus/grpc/reply.dart';
 import 'package:PiliPlus/http/fav.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/user.dart';
 import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/models/common/video/source_type.dart';
+import 'package:PiliPlus/models/common/video/video_type.dart';
 import 'package:PiliPlus/models_new/fav/fav_folder/data.dart';
 import 'package:PiliPlus/models_new/video/video_detail/data.dart';
 import 'package:PiliPlus/models_new/video/video_detail/stat_detail.dart';
 import 'package:PiliPlus/models_new/video/video_tag/data.dart';
 import 'package:PiliPlus/pages/video/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/triple_mixin.dart';
+import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/global_data.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
@@ -150,6 +153,46 @@ abstract class CommonIntroController extends GetxController
   Future<void> queryVideoTags() async {
     final result = await UserHttp.videoTags(bvid: bvid, cid: cid.value);
     videoTags.value = result.dataOrNull;
+    registerAiVideoTags();
+  }
+
+  int? get aiVideoOid {
+    try {
+      final ctr = videoDetailCtr;
+      if (ctr.videoType == VideoType.pugv) return ctr.epId;
+      return ctr.aid == 0 ? null : ctr.aid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void registerAiVideo({String? title, String? desc}) {
+    try {
+      final oid = aiVideoOid;
+      if (oid == null || oid == 0) return;
+      AiReplyFilterService.instance.registerVideo(
+        oid,
+        title: title,
+        desc: desc,
+      );
+      ReplyGrpc.prefetchAiReplyFilter(
+        oid: oid,
+        type: videoDetailCtr.videoType.replyType,
+      );
+    } catch (_) {}
+  }
+
+  void registerAiVideoTags() {
+    try {
+      final oid = aiVideoOid;
+      if (oid == null || oid == 0) return;
+      final tags = videoTags.value
+          ?.map((e) => e.tagName ?? '')
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (tags == null || tags.isEmpty) return;
+      AiReplyFilterService.instance.registerVideo(oid, tags: tags);
+    } catch (_) {}
   }
 
   Future<void> viewLater() async {

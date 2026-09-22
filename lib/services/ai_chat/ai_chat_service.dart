@@ -261,17 +261,21 @@ class AiChatService {
         data = jsonDecode(data);
       } catch (_) {}
     }
+    String? finishReason;
     if (data is Map) {
       final choices = data['choices'];
       if (choices is List && choices.isNotEmpty) {
         final choice = choices[0];
         if (choice is Map) {
+          finishReason = choice['finish_reason']?.toString();
           final message = choice['message'];
-          if (message is Map && message['content'] != null) {
-            return message['content'].toString();
+          final content = message is Map ? message['content'] : null;
+          if (content != null && content.toString().trim().isNotEmpty) {
+            return content.toString();
           }
-          if (choice['text'] != null) {
-            return choice['text'].toString();
+          final text = choice['text'];
+          if (text != null && text.toString().trim().isNotEmpty) {
+            return text.toString();
           }
         }
       }
@@ -279,7 +283,9 @@ class AiChatService {
     throw _logged(AiApiException(
       url: url,
       statusCode: res.statusCode,
-      detail: '响应缺少内容：${_snippet(data?.toString() ?? '')}',
+      detail: '响应缺少内容'
+          '${finishReason == null ? '' : '（finish_reason: $finishReason）'}'
+          '：${_snippet(data?.toString() ?? '')}',
     ));
   }
 

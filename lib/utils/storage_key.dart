@@ -208,10 +208,13 @@ abstract final class SettingBoxKey {
   static const String enableAiReplyFilter = 'enableAiReplyFilter',
       aiReplyFilterCriteria = 'aiReplyFilterCriteria',
       aiReplyFilterRevealFiltered = 'aiReplyFilterRevealFiltered',
+      aiReplyFilterSystemPrompt = 'aiReplyFilterSystemPrompt',
+      aiReplyFilterUserPrompt = 'aiReplyFilterUserPrompt',
       enableAiReplyFilterThinking = 'enableAiReplyFilterThinking',
       aiReplyFilterThinkingParam = 'aiReplyFilterThinkingParam',
       aiReplyFilterBatchSize = 'aiReplyFilterBatchSize',
-      aiReplyFilterConcurrency = 'aiReplyFilterConcurrency';
+      aiReplyFilterConcurrency = 'aiReplyFilterConcurrency',
+      enableAiReplyStats = 'enableAiReplyStats';
 
   static const String minimizeOnExit = 'minimizeOnExit',
       windowSize = 'windowSize',
@@ -351,7 +354,8 @@ abstract final class LocalCacheKey {
       cdnNodeList = 'cdnNodeList',
       cdnNodeListTime = 'cdnNodeListTime',
       cdnNodeRegion = 'cdnNodeRegion',
-      aiReplyFilterCache = 'aiReplyFilterCache';
+      aiReplyFilterCache = 'aiReplyFilterCache',
+      aiReplyStats = 'aiReplyStats';
 }
 
 abstract final class VideoBoxKey {

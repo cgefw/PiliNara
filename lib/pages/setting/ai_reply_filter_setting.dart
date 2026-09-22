@@ -1,4 +1,5 @@
 import 'package:PiliPlus/common/widgets/dialog/dialog.dart';
+import 'package:PiliPlus/pages/setting/ai_reply_stats.dart';
 import 'package:PiliPlus/pages/setting/widgets/switch_item.dart';
 import 'package:PiliPlus/services/ai_reply_filter/ai_reply_filter_service.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
@@ -118,10 +119,17 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
   }
 
   String _thinkingParamLabel(int value) => switch (value) {
-    0 => 'enable_thinking（通义/硅基流动等）',
-    1 => 'thinking.type（火山方舟/DeepSeek 等）',
-    _ => 'reasoning_effort: low（OpenAI o 系列）',
+    0 => 'thinking.type（DeepSeek/火山方舟等，推荐）',
+    1 => 'enable_thinking（通义/硅基流动等）',
+    2 => 'reasoning_effort（OpenAI o 系列）',
+    _ => '不发送参数（用接口默认；DeepSeek 默认会思考）',
   };
+
+  String _promptPreview(String value, String fallback) {
+    final text = value.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (text.isEmpty) return fallback;
+    return text.length > 40 ? '${text.substring(0, 40)}…' : text;
+  }
 
   Future<void> _selectThinkingParam() async {
     final value = await showDialog<int>(
@@ -129,7 +137,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
       builder: (context) => SimpleDialog(
         title: const Text('Thinking 参数格式'),
         children: [
-          for (var i = 0; i < 3; i++)
+          for (var i = 0; i < 4; i++)
             SimpleDialogOption(
               onPressed: () => Get.back(result: i),
               child: Text(
@@ -143,6 +151,35 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
     if (value == null) return;
     Pref.aiReplyFilterThinkingParam = value;
     if (mounted) setState(() {});
+  }
+
+  Future<void> _editSystemPrompt() async {
+    final result = await _showTextDialog(
+      title: '自定义 System 提示词',
+      hint: '留空恢复默认。这里定义完整的审查规则',
+      initial: Pref.aiReplyFilterSystemPrompt,
+      maxLines: 10,
+    );
+    if (result == null) return;
+    Pref.aiReplyFilterSystemPrompt = result;
+    AiReplyFilterService.instance.onCriteriaChanged();
+    if (mounted) setState(() {});
+    SmartDialog.showToast(result.isEmpty ? '已恢复默认 System 提示词' : '已保存，将按新提示词重新判定');
+  }
+
+  Future<void> _editUserPrompt() async {
+    final result = await _showTextDialog(
+      title: '自定义 User 提示词',
+      hint: '留空恢复默认。可用占位符：{comments} 评论JSON、{count} 条数、'
+          '{title} 视频标题、{desc} 视频简介',
+      initial: Pref.aiReplyFilterUserPrompt,
+      maxLines: 10,
+    );
+    if (result == null) return;
+    Pref.aiReplyFilterUserPrompt = result;
+    AiReplyFilterService.instance.onCriteriaChanged();
+    if (mounted) setState(() {});
+    SmartDialog.showToast(result.isEmpty ? '已恢复默认 User 提示词' : '已保存，将按新提示词重新判定');
   }
 
   Future<void> _editBatchSize() => _editIntSetting(
@@ -297,10 +334,35 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             onTap: _editCriteria,
           ),
           ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: const Text('自定义 System 提示词'),
+            subtitle: Text(
+              _promptPreview(Pref.aiReplyFilterSystemPrompt, '默认：内置审查规则'),
+            ),
+            onTap: _editSystemPrompt,
+          ),
+          ListTile(
+            leading: const Icon(Icons.chat_outlined),
+            title: const Text('自定义 User 提示词'),
+            subtitle: Text(
+              _promptPreview(
+                Pref.aiReplyFilterUserPrompt,
+                '默认：含 {title}/{desc}/{comments} 占位符模板',
+              ),
+            ),
+            onTap: _editUserPrompt,
+          ),
+          ListTile(
             leading: const Icon(Icons.science_outlined),
             title: const Text('测试过滤效果'),
             subtitle: const Text('输入一段文字，立即用当前配置检测'),
             onTap: _testFilter,
+          ),
+          ListTile(
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text('争议统计'),
+            subtitle: const Text('按视频标签统计争议程度，样本达标才计入'),
+            onTap: () => Get.to(() => const AiReplyStatsPage()),
           ),
           ListTile(
             leading: const Icon(Icons.delete_outline),
@@ -311,7 +373,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
           const Divider(),
           SwitchListTile(
             title: const Text('启用 Thinking 推理'),
-            subtitle: const Text('模型先推理再判定，更准但更慢，需接口支持'),
+            subtitle: const Text('DeepSeek 等接口默认思考且很慢，建议保持关闭'),
             secondary: const Icon(Icons.psychology_outlined),
             value: Pref.enableAiReplyFilterThinking,
             onChanged: (value) {
@@ -320,7 +382,6 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             },
           ),
           ListTile(
-            enabled: Pref.enableAiReplyFilterThinking,
             leading: const Icon(Icons.tune),
             title: const Text('Thinking 参数格式'),
             subtitle: Text(
@@ -351,10 +412,9 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
                 '• 进入视频先检测首屏约 20 条，评论区下滑时会自动预检下一页\n'
                 '• 只显示通过检测的评论；检测中的评论显示为骨架占位，结果返回后逐条出现\n'
                 '• 被过滤的评论默认完全不显示，可开启「显示被过滤的评论」查看\n'
-                '• 长按任意评论可选择「AI 重新检测」，忽略缓存强制复查\n'
-                '• 判定结果在本地缓存并跨视频共享，相同内容只判定一次\n'
-                '• 仅评论文本会发送到所配置的 AI 接口，不会上传账号信息\n'
-                '• 修改过滤标准后缓存会自动失效并重新判定',
+                '• 判定会带上视频标题、简介与标签；长按评论可选择「AI 重新检测」\n'
+                '• DeepSeek 默认开启思考且响应很慢，请把「Thinking 参数格式」设为 thinking.type，保持开关关闭\n'
+                '• 修改提示词/过滤标准后缓存自动失效并重新判定；判定结果跨视频共享',
                 style: theme.textTheme.bodySmall,
               ),
             ),

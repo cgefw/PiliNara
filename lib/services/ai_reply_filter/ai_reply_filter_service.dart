@@ -31,25 +31,18 @@ class _PendingComment {
   const _PendingComment({
     required this.text,
     this.oid,
-    this.title,
-    this.desc,
-    this.tags,
     this.type = 1,
   });
 
   final int type;
   final String text;
   final int? oid;
-  final String? title;
-  final String? desc;
-  final List<String>? tags;
 }
 
 class _VideoMeta {
-  const _VideoMeta({this.title, this.desc, this.tags});
+  const _VideoMeta({this.title, this.tags});
 
   final String? title;
-  final String? desc;
   final List<String>? tags;
 }
 
@@ -77,7 +70,6 @@ class AiReplyFilterService {
   static const int _maxRetryEntries = 200;
   static const int _maxTextLength = 500;
   static const int _maxTitleLength = 80;
-  static const int _maxDescLength = 300;
   static const int _maxTagLength = 30;
   static const int _maxTags = 10;
   static const int _maxVideoMeta = 500;
@@ -178,7 +170,7 @@ class AiReplyFilterService {
 
   String get _userTemplate {
     final custom = Pref.aiReplyFilterUserPrompt.trim();
-    return custom.isEmpty ? defaultUserPrompt : custom;
+    return AiReplyProtocol.resolveUserTemplate(custom);
   }
 
   AiReplyApiPolicy get apiPolicy => AiReplyApiPolicy(
@@ -192,8 +184,8 @@ class AiReplyFilterService {
   String get _fingerprint => fingerprintOf(
     buildSystemPrompt(_systemTemplate, Pref.aiReplyFilterCriteria),
     jsonEncode([
-      AiReplyProtocol.cacheTemplate(_userTemplate),
-      'context-cache-v3',
+      _userTemplate,
+      'comment-only-codes-v1',
       AiReplyApiPolicy.normalizeUrl(Pref.aiApiUrl),
       Pref.aiModel.trim(),
       apiPolicy.body,
@@ -232,13 +224,9 @@ class AiReplyFilterService {
   static String buildUserPrompt(
     String template, {
     required List<String> texts,
-    String? title,
-    String? desc,
   }) => AiReplyProtocol.buildUserPrompt(
     template,
     texts: texts,
-    title: title,
-    desc: desc,
     compact: AiReplyProtocol.isCompactTemplate(template),
   );
 
@@ -374,14 +362,10 @@ class AiReplyFilterService {
         _failedAt.containsKey(hash)) {
       return;
     }
-    final meta = oid == null ? null : _videoMeta[(type, oid)];
     _pending[hash] = _PendingComment(
       text: _truncate(normalize(text)),
       oid: oid,
       type: type,
-      title: meta?.title,
-      desc: meta?.desc,
-      tags: meta?.tags,
     );
     if (!(_timer?.isActive ?? false)) _timer = Timer(_debounce, _pump);
   }
@@ -407,14 +391,12 @@ class AiReplyFilterService {
     int oid, {
     int type = 1,
     String? title,
-    String? desc,
     List<String>? tags,
   }) {
     if (oid == 0) return;
     final existing = _videoMeta[(type, oid)];
     final meta = _VideoMeta(
       title: _sanitize(title, _maxTitleLength) ?? existing?.title,
-      desc: _sanitize(desc, _maxDescLength) ?? existing?.desc,
       tags: _sanitizeTags(tags) ?? existing?.tags,
     );
     _videoMeta[(type, oid)] = meta;
@@ -521,19 +503,16 @@ class AiReplyFilterService {
     List<String> texts, {
     String? criteria,
     CancelToken? cancelToken,
-    String? title,
-    String? desc,
   }) async {
+    final userTemplate = _userTemplate;
     final (system, user) = (
       buildSystemPrompt(
         _systemTemplate,
         criteria ?? Pref.aiReplyFilterCriteria,
       ),
       buildUserPrompt(
-        AiReplyProtocol.cacheTemplate(_userTemplate),
+        userTemplate,
         texts: texts,
-        title: title,
-        desc: desc,
       ),
     );
     final messages = [
@@ -558,21 +537,19 @@ class AiReplyFilterService {
               if (fingerprint == _activeFingerprint) _recordUsage(usage);
             },
           );
-    return parseVerdicts(content, texts.length);
+    return AiReplyProtocol.parse(
+      content,
+      texts.length,
+      requireCodes: userTemplate == defaultUserPrompt,
+    );
   }
 
-  Future<AiReplyVerdict?> checkNow(
-    String text, {
-    String? title,
-    String? desc,
-  }) async {
+  Future<AiReplyVerdict?> checkNow(String text) async {
     final normalized = normalize(text);
     if (normalized.isEmpty) return null;
     final generation = _generation;
     final results = await classifyTexts(
       [_truncate(normalized)],
-      title: title,
-      desc: desc,
     );
     if (results[0] != null &&
         generation == _generation &&
@@ -627,11 +604,8 @@ class AiReplyFilterService {
     _tokens.add(token);
     _inFlight[hash] = token;
     try {
-      final meta = oid == null ? null : _videoMeta[(type, oid)];
       final results = await classifyTexts(
         [_truncate(normalized)],
-        title: meta?.title,
-        desc: meta?.desc,
         cancelToken: token,
       );
       if (generation != _generation || _versions[hash] != version) return null;
@@ -738,14 +712,8 @@ class AiReplyFilterService {
     }
 
     try {
-      final comment = batch.first.value;
-      final meta = comment.oid == null
-          ? null
-          : _videoMeta[(comment.type, comment.oid!)];
       final results = await classifyTexts(
         batch.map((e) => e.value.text).toList(),
-        title: meta?.title ?? comment.title,
-        desc: meta?.desc ?? comment.desc,
         cancelToken: token,
       );
       // Check the expensive prompt fingerprint once per completed request.

@@ -100,15 +100,17 @@ void main() {
     expect(AiReplyProtocol.parse('[{"i":1,"u":true}]', 3), isEmpty);
   });
 
-  test('template expansion cannot expand tokens inside comment or title', () {
-    final prompt = AiReplyProtocol.buildUserPrompt(
-      '标题{title} 评论{comments}',
-      title: '{comments}',
-      texts: ['{count}'],
-    );
-    expect(prompt, startsWith('标题{comments} 评论'));
-    expect(prompt, contains('{count}'));
-  });
+  test(
+    'template expansion blanks context and preserves braces in comments',
+    () {
+      final prompt = AiReplyProtocol.buildUserPrompt(
+        '标题{title} 评论{comments}',
+        texts: ['{count}'],
+      );
+      expect(prompt, startsWith('标题 评论'));
+      expect(prompt, contains('{count}'));
+    },
+  );
 
   test('long comment keeps both opening context and ending reversal', () {
     final text = '开头${'中' * 700}结尾并不是在骂你';
@@ -118,11 +120,101 @@ void main() {
     expect(truncated.length, lessThan(520));
   });
 
+  test('default system prompt matches the user supplied text exactly', () {
+    expect(
+      AiReplyProtocol.systemPrompt,
+      File('test/fixtures/ai_reply_system_prompt.txt')
+          .readAsStringSync()
+          .trimRight(),
+    );
+  });
+
+  test(
+    'all request paths send comments only and show local code labels',
+    () async {
+      service
+        ..registerVideo(
+          1,
+          title: 'private-video-title',
+          tags: ['private-tag'],
+        )
+        ..trackAll(['comment'], oid: 1);
+      requests.single.complete('{"c":{"0":2},"r":{"0":"不要显示这段模型解释"}}');
+      await drain();
+      expect(
+        service.verdictOfHash(service.keyFor('comment', oid: 1))!.reason,
+        '轻蔑嘲讽或贬损',
+      );
+      final recheck = service.recheck('comment', oid: 1);
+      requests.last.complete('{"c":{"0":0}}');
+      await recheck;
+      final test = service.checkNow('comment');
+      requests.last.complete('{"c":{"0":0}}');
+      await test;
+      expect(messages, hasLength(3));
+      for (final request in messages) {
+        expect(request.first['content'], AiReplyProtocol.systemPrompt);
+        expect(
+          request.last['content'],
+          AiReplyFilterService.buildUserPrompt(
+            AiReplyProtocol.userPrompt,
+            texts: ['comment'],
+          ),
+        );
+        expect(request.toString(), isNot(contains('private-video-title')));
+        expect(request.toString(), isNot(contains('private-tag')));
+      }
+    },
+  );
+
+  test('default code contract rejects a legacy detailed response', () async {
+    final result = service.checkNow('comment');
+    requests.single.complete('{"v":{"0":1},"r":{"0":"详细原因"}}');
+    expect(await result, isNull);
+  });
+
+  test(
+    'saved previous default migrates to the current code contract',
+    () async {
+      Pref.aiReplyFilterUserPrompt = AiReplyProtocol.legacyUserPrompt;
+      await drain();
+      final result = service.checkNow('comment');
+      expect(
+        messages.single.last['content'],
+        AiReplyFilterService.buildUserPrompt(
+          AiReplyProtocol.userPrompt,
+          texts: ['comment'],
+        ),
+      );
+      requests.single.complete('{"c":{"0":4}}');
+      expect((await result)!.reason, '广告诈骗或垃圾推广');
+    },
+  );
+
+  test('legacy context lines are omitted without rewriting comment data', () {
+    final result = AiReplyFilterService.buildUserPrompt(
+      AiReplyProtocol.binaryUserPrompt,
+      texts: ['{title} {desc} {comments}'],
+    );
+    expect(result, isNot(contains('视频标题：')));
+    expect(result, isNot(contains('简介：')));
+    expect(result, contains('[[0,"{title} {desc} {comments}"]]'));
+  });
+
   test('one page is sent immediately as one compact request', () async {
     service.trackAll(List.generate(20, (i) => 'comment $i'), oid: 1);
     expect(requests.length, 1);
     expect(messages.single.last['content'], isNot(contains('"text":')));
-    requests.single.complete(jsonEncode({'v': List.filled(20, 0)}));
+    expect(messages.single.first['content'], AiReplyProtocol.systemPrompt);
+    expect(messages.single.last['content'], contains('{"c":{}}'));
+    expect(messages.single.last['content'], isNot(contains('"v"')));
+    expect(messages.single.last['content'], isNot(contains('视频标题')));
+    expect(messages.single.last['content'], isNot(contains('简介')));
+    requests.single.complete(
+      jsonEncode({
+        'c': {for (var i = 0; i < 20; i++) '$i': 0},
+      }),
+    );
     await drain();
     expect(service.cacheCount, 20);
   });
@@ -136,8 +228,8 @@ void main() {
         ..track('一样', oid: 2, sampleId: 'c')
         ..flush();
       expect(requests.length, 2);
-      requests[0].complete('{"v":[0]}');
-      requests[1].complete('{"v":[1]}');
+      requests[0].complete('{"c":{"0":0}}');
+      requests[1].complete('{"c":{"0":1}}');
       await drain();
       expect(
         service.verdictOfHash(service.keyFor('一样', oid: 1))!.unsafe,
@@ -164,7 +256,7 @@ void main() {
         messages.single.last['content'],
         isNot(contains('isolated-video-context')),
       );
-      requests.single.complete('{"v":{"0":0}}');
+      requests.single.complete('{"c":{"0":0}}');
       await drain();
       expect(AiReplyStats.instance.commentCount, 0);
     },
@@ -197,7 +289,7 @@ void main() {
     'new credential clears failures while retaining cached verdicts',
     () async {
       service.trackAll(['known'], oid: 1);
-      requests[0].complete('{"v":[0]}');
+      requests[0].complete('{"c":{"0":0}}');
       await drain();
       service.trackAll(['failed'], oid: 1);
       requests[1].complete('{}');
@@ -238,7 +330,7 @@ void main() {
     final second = service.recheck('manual', oid: 1);
     service.trackAll(['manual'], oid: 1);
     expect(requests, hasLength(1));
-    requests.single.complete('{"v":[1]}');
+    requests.single.complete('{"c":{"0":1}}');
     expect((await first)!.unsafe, isTrue);
     expect((await second)!.unsafe, isTrue);
   });
@@ -251,8 +343,8 @@ void main() {
     await drain();
     service.trackAll(['after'], oid: 1);
     expect(requests, hasLength(2));
-    requests[0].complete('{"v":[1]}');
-    requests[1].complete('{"v":[0]}');
+    requests[0].complete('{"c":{"0":1}}');
+    requests[1].complete('{"c":{"0":0}}');
     await drain();
     service.trackAll(['last'], oid: 1);
     expect(requests, hasLength(3));
@@ -260,14 +352,14 @@ void main() {
 
   test('switching back restores a bounded configuration cache', () async {
     service.trackAll(['comment'], oid: 1);
-    requests.single.complete('{"v":[1]}');
+    requests.single.complete('{"c":{"0":1}}');
     await drain();
     Pref.aiModel = 'model-B';
     await drain();
     expect(service.cacheCount, 0);
     expect(service.totalCacheCount, 1);
     service.trackAll(['comment'], oid: 1);
-    requests.last.complete('{"v":[0]}');
+    requests.last.complete('{"c":{"0":0}}');
     await drain();
     Pref.aiModel = 'deepseek-flash';
     await drain();
@@ -290,7 +382,7 @@ void main() {
     'cosmetic URL edits and equivalent thinking formats keep cache',
     () async {
       service.trackAll(['comment'], oid: 1);
-      requests.single.complete('{"v":[0]}');
+      requests.single.complete('{"c":{"0":0}}');
       await drain();
       Pref.aiApiUrl = ' https://api.deepseek.com/ ';
       Pref.aiReplyFilterThinkingParam = 0;
@@ -305,7 +397,7 @@ void main() {
     service.trackAll(['comment', 'comment'], oid: 1);
     expect(service.localMisses, 1);
     expect(service.inFlightReuses, 1);
-    requests.single.complete('{"v":[0]}');
+    requests.single.complete('{"c":{"0":0}}');
     await drain();
     final key = service.keyFor('comment', oid: 1);
     for (var i = 0; i < 5; i++) {
@@ -327,10 +419,10 @@ void main() {
     await drain();
     service.trackAll(['comment'], oid: 1);
     expect(requests.length, 2);
-    requests[0].complete('{"v":[1]}');
+    requests[0].complete('{"c":{"0":1}}');
     await drain();
     expect(service.cacheCount, 0);
-    requests[1].complete('{"v":[0]}');
+    requests[1].complete('{"c":{"0":0}}');
     await drain();
     expect(
       service.verdictOfHash(service.keyFor('comment', oid: 1))!.unsafe,
@@ -342,7 +434,7 @@ void main() {
     service.trackAll(['comment'], oid: 1);
     final key = service.keyFor('comment', oid: 1);
     service.allowForever(key);
-    requests.single.complete('{"v":[1]}');
+    requests.single.complete('{"c":{"0":1}}');
     await drain();
     expect(service.isRevealed(key), isTrue);
     expect(service.verdictOfHash(key), isNull);
@@ -365,19 +457,19 @@ void main() {
       service
         ..track('comment', oid: 1, sampleId: '42')
         ..flush();
-      requests[0].complete('{"v":[1]}');
+      requests[0].complete('{"c":{"0":1}}');
       await drain();
       expect(AiReplyStats.instance.commentCount, 1);
       await service.clearCache();
       service
         ..track('comment', oid: 1, sampleId: '42')
         ..flush();
-      requests[1].complete('{"v":[0]}');
+      requests[1].complete('{"c":{"0":0}}');
       await drain();
       expect(AiReplyStats.instance.commentCount, 1);
       expect(AiReplyStats.instance.unsafeCount, 0);
       final checking = service.recheck('comment', oid: 1, sampleId: '42');
-      requests[2].complete('{"v":[1]}');
+      requests[2].complete('{"c":{"0":1}}');
       await checking;
       expect(AiReplyStats.instance.commentCount, 1);
       expect(AiReplyStats.instance.unsafeCount, 1);
@@ -387,9 +479,9 @@ void main() {
   test('late old verdict cannot overwrite an explicit recheck', () async {
     service.trackAll(['comment'], oid: 1);
     final check = service.recheck('comment', oid: 1);
-    requests[1].complete('{"v":[0]}');
+    requests[1].complete('{"c":{"0":0}}');
     await check;
-    requests[0].complete('{"v":[1]}');
+    requests[0].complete('{"c":{"0":1}}');
     await drain();
     expect(
       service.verdictOfHash(service.keyFor('comment', oid: 1))!.unsafe,
@@ -400,7 +492,7 @@ void main() {
   test('old batch completion cannot remove an active manual request', () async {
     service.trackAll(['shared'], oid: 1);
     final manual = service.recheck('shared', oid: 1, sampleId: 'manual-id');
-    requests[0].complete('{"v":[1]}');
+    requests[0].complete('{"c":{"0":1}}');
     await drain();
     service
       ..track('shared', oid: 1, sampleId: 'second-id')
@@ -411,20 +503,27 @@ void main() {
     expect(AiReplyStats.instance.commentCount, 3);
   });
 
-  test('output-only upgrade reuses saved binary-template verdicts', () async {
+  test('category mode never reuses detailed legacy reasons', () async {
     Pref.aiReplyFilterUserPrompt = AiReplyProtocol.binaryUserPrompt;
     await drain();
     service.trackAll(['existing'], oid: 1);
     expect(messages.last.last['content'], contains('[[0,"existing"]]'));
-    requests.single.complete('{"v":{"0":1}}');
+    requests.single.complete('{"v":{"0":1},"r":{"0":"旧版详细解释"}}');
     await drain();
+    expect(
+      service.verdictOfHash(service.keyFor('existing', oid: 1))!.reason,
+      '旧版详细解释',
+    );
     Pref.aiReplyFilterUserPrompt = '';
     await drain();
     service.trackAll(['existing'], oid: 1);
-    expect(requests, hasLength(1));
+    expect(requests, hasLength(2));
+    expect(service.verdictOfHash(service.keyFor('existing', oid: 1)), isNull);
+    requests.last.complete('{"c":{"0":2}}');
+    await drain();
     expect(
-      service.verdictOfHash(service.keyFor('existing', oid: 1))!.unsafe,
-      isTrue,
+      service.verdictOfHash(service.keyFor('existing', oid: 1))!.reason,
+      '轻蔑嘲讽或贬损',
     );
     Pref.aiReplyFilterCriteria = 'different rules';
     await drain();
@@ -458,11 +557,11 @@ void main() {
       ..trackAll(['two'], oid: 2)
       ..trackAll(['three'], oid: 3);
     expect(requests.length, 2);
-    requests[0].complete('{"v":[0]}');
+    requests[0].complete('{"c":{"0":0}}');
     await drain();
     expect(requests.length, 3);
-    requests[1].complete('{"v":[0]}');
-    requests[2].complete('{"v":[0]}');
+    requests[1].complete('{"c":{"0":0}}');
+    requests[2].complete('{"c":{"0":0}}');
     await drain();
   });
 
@@ -567,7 +666,7 @@ void main() {
     await tester.pump();
     expect(find.text('original comment'), findsOneWidget);
     service.flush();
-    requests.single.complete('{"v":{"0":1}}');
+    requests.single.complete('{"c":{"0":1}}');
     await tester.pump();
     await tester.pump();
     expect(find.text('original comment'), findsNothing);

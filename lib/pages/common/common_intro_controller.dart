@@ -166,7 +166,7 @@ abstract class CommonIntroController extends GetxController
     }
   }
 
-  void registerAiVideo({String? title, String? desc}) {
+  void registerAiVideo({String? title}) {
     try {
       final oid = aiVideoOid;
       if (oid == null || oid == 0) return;
@@ -174,7 +174,6 @@ abstract class CommonIntroController extends GetxController
         oid,
         type: videoDetailCtr.videoType.replyType,
         title: title,
-        desc: desc,
       );
       ReplyGrpc.prefetchAiReplyFilter(
         oid: oid,

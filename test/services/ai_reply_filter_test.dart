@@ -118,28 +118,24 @@ void main() {
   });
 
   group('buildUserPrompt', () {
-    test('replaces all placeholders', () {
+    test('clears legacy context placeholders', () {
       final result = AiReplyFilterService.buildUserPrompt(
         't:{title} d:{desc} n:{count} c:{comments}',
         texts: ['第一条', '第二条'],
-        title: '标题',
-        desc: '简介',
       );
-      expect(result, contains('t:标题'));
-      expect(result, contains('d:简介'));
+      expect(result, contains('t: d:'));
+      expect(result, isNot(contains('{desc}')));
       expect(result, contains('n:2'));
       expect(result, contains('"i":0'));
       expect(result, contains('第一条'));
     });
 
-    test('prepends context when template has no title/desc', () {
+    test('does not prepend context to comment-only templates', () {
       final result = AiReplyFilterService.buildUserPrompt(
         '审查：{comments}',
         texts: ['x'],
-        title: '标题',
-        desc: '简介',
       );
-      expect(result, startsWith('视频标题：《标题》，简介：简介'));
+      expect(result, '审查：[{"i":0,"text":"x"}]');
     });
 
     test('appends payload when template lacks comments placeholder', () {

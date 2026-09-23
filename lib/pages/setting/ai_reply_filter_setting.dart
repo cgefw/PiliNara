@@ -173,9 +173,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
   Future<void> _editUserPrompt() async {
     final result = await _showTextDialog(
       title: '自定义 User 提示词',
-      hint:
-          '留空恢复默认。可用占位符：{comments} 评论JSON、{count} 条数、'
-          '{title} 视频标题、{desc} 视频简介',
+      hint: '留空恢复默认。可用占位符：{comments} 评论JSON、{count} 条数。仅发送评论，不发送视频标题或简介',
       initial: Pref.aiReplyFilterUserPrompt,
       maxLines: 10,
     );
@@ -285,7 +283,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
                             : colorScheme.error,
                       ),
                       const SizedBox(width: 8),
-                      Text('接口状态', style: theme.textTheme.titleMedium),
+                      Text('接口配置', style: theme.textTheme.titleMedium),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -314,17 +312,14 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             setKey: SettingBoxKey.enableAiReplyFilter,
             defaultVal: false,
           ),
-          SwitchListTile(
-            title: const Text('先显示评论，再过滤'),
-            subtitle: Text(
-              Pref.aiReplyFilterShowBeforeVerdict
-                  ? '立即阅读，AI 判定为不适后隐藏；可能短暂看到不适评论'
-                  : '先显示占位，通过 AI 检测后才显示评论',
-            ),
-            secondary: const Icon(Icons.speed),
-            value: Pref.aiReplyFilterShowBeforeVerdict,
+          SetSwitchItem(
+            title: '先显示评论，再过滤',
+            subtitle: Pref.aiReplyFilterShowBeforeVerdict
+                ? '立即阅读，AI 判定为不适后隐藏；可能短暂看到不适评论'
+                : '先显示占位，通过 AI 检测后才显示评论',
+            leading: const Icon(Icons.speed),
+            setKey: SettingBoxKey.aiReplyFilterShowBeforeVerdict,
             onChanged: (value) {
-              Pref.aiReplyFilterShowBeforeVerdict = value;
               service.refreshSettings();
               setState(() {});
             },
@@ -346,7 +341,7 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             leading: const Icon(Icons.tune),
             title: const Text('自定义过滤标准'),
             subtitle: Text(
-              criteria.isEmpty ? '默认：过滤辱骂、引战、说教、低俗、歧视等令人不适的内容' : criteria,
+              criteria.isEmpty ? '未添加额外标准，按 System 提示词判定' : criteria,
             ),
             onTap: _editCriteria,
           ),
@@ -354,7 +349,12 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             leading: const Icon(Icons.description_outlined),
             title: const Text('自定义 System 提示词'),
             subtitle: Text(
-              _promptPreview(Pref.aiReplyFilterSystemPrompt, '默认：内置审查规则'),
+              _promptPreview(
+                Pref.aiReplyFilterSystemPrompt,
+                '默认：过滤攻击、嘲讽等；低俗本身不过滤',
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
             onTap: _editSystemPrompt,
           ),
@@ -364,8 +364,10 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             subtitle: Text(
               _promptPreview(
                 Pref.aiReplyFilterUserPrompt,
-                '默认：含 {title}/{desc}/{comments} 占位符模板',
+                '默认：仅发送评论，返回 0–6 分类码',
               ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
             onTap: _editUserPrompt,
           ),
@@ -410,17 +412,14 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
             }),
           ),
           const Divider(),
-          SwitchListTile(
-            title: const Text('启用 Thinking 推理'),
-            subtitle: Text(
-              service.apiPolicy.onlyThinking
-                  ? '当前模型只支持思考，开关无法关闭；追求速度可改用支持非思考的模型'
-                  : '评论分类建议关闭以减少等待和 token；Qwen 开启时使用流式请求',
-            ),
-            secondary: const Icon(Icons.psychology_outlined),
-            value: Pref.enableAiReplyFilterThinking,
+          SetSwitchItem(
+            title: '启用 Thinking 推理',
+            subtitle: service.apiPolicy.onlyThinking
+                ? '当前模型只支持思考，开关无法关闭；追求速度可改用支持非思考的模型'
+                : '评论分类建议关闭以减少等待和 token；Qwen 开启时使用流式请求',
+            leading: const Icon(Icons.psychology_outlined),
+            setKey: SettingBoxKey.enableAiReplyFilterThinking,
             onChanged: (value) {
-              Pref.enableAiReplyFilterThinking = value;
               setState(() {});
             },
           ),
@@ -455,9 +454,9 @@ class _AiReplyFilterSettingState extends State<AiReplyFilterSetting> {
                 '• 进入视频预检首屏最多 20 条；后续页在实际加载时送检，减少无效调用\n'
                 '• 可选先检测后显示，或先显示再过滤；请求失败时暂时放行，最多自动重试一次\n'
                 '• 被过滤的评论默认完全不显示，可开启「显示被过滤的评论」查看\n'
-                '• 判定会带上视频标题与简介；长按评论可选择「AI 重新检测」\n'
+                '• 仅发送评论文本，不发送视频标题或简介；长按评论可选择「AI 重新检测」\n'
                 '• 官方 DeepSeek / 百炼 Qwen 建议选择自动识别并关闭 Thinking；兼容网关可手动选择参数格式\n'
-                '• 同一视频的重复文本复用判定，不同视频隔离；默认使用精简 JSON 结果减少 token\n'
+                '• 同一视频的重复文本复用判定，不同视频隔离；默认返回分类码，由客户端显示对应原因\n'
                 '• 常看的判定优先保留，切回旧配置可复用缓存；总容量最多 1500 条，清除会移除所有配置的判定\n'
                 '• 接口缓存由服务商决定；固定规则置于输入前部，不为凑缓存门槛增加提示词\n'
                 '• 新配置单独判定，统计只展示当前判定标准的数据',

@@ -115,7 +115,7 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
           ..listOrder = videoDetail.value.listOrder;
       }
       videoDetail.value = response;
-      registerAiVideo(title: response.title, desc: response.desc);
+      registerAiVideo(title: response.title);
       try {
         if (videoDetailCtr.cover.value.isEmpty ||
             (videoDetailCtr.videoUrl.isNullOrEmpty &&
